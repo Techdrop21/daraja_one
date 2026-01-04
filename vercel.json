@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "daraja_one/wsgi.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "daraja_one/wsgi.py"
+    }
+  ]
+}
