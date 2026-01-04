@@ -6,11 +6,11 @@ A Django REST Framework application that handles Safaricom Daraja M-Pesa C2B (Cu
 
 This project implements a production-ready C2B callback endpoint that:
 - ✅ Validates incoming Daraja C2B payment requests
-- ✅ Checks BillRefNumber against a dynamic Google Sheets account list
-- ✅ Prevents duplicate transactions
-- ✅ Forwards validated transactions to a Google Apps Script webhook for logging
-- ✅ Falls back to hardcoded test accounts if Google Sheets is unavailable
-- ✅ Responds to Daraja with proper ResultCode within 5 seconds
+ - ✅ Checks BillRefNumber against a predetermined (env-configurable) account list
+ - ✅ Prevents duplicate transactions
+ - ✅ Writes validated transactions directly to Google Sheets via the Sheets API (background)
+ - ✅ Falls back to hardcoded test accounts if no env-configured accounts are present
+ - ✅ Responds to Daraja with proper ResultCode within 5 seconds
 
 ## Project Structure
 
@@ -95,8 +95,8 @@ ALLOWED_HOSTS=localhost,127.0.0.1
 GOOGLE_SERVICE_ACCOUNT_FILE=path/to/service-account.json
 GOOGLE_SHEET_ID=your-spreadsheet-id-here
 
-# Apps Script Webhook (optional, skips forwarding if not set)
-APPS_SCRIPT_URL=https://script.google.com/macros/d/YOUR_SCRIPT_ID/usercallback
+# Predetermined accounts (optional, comma-separated). If set, these are used for validation.
+PREDETERMINED_ACCOUNTS=600000,600001,600002,TEST001
 
 # Optional Timeouts
 ACCOUNTS_CACHE_TTL=120          # Seconds to cache Sheets data (default: 120)
@@ -111,6 +111,8 @@ C2B_HTTP_TIMEOUT=3.0            # HTTP timeout for forwarding (default: 3.0)
 4. Share your Google Sheet with the service account email
 5. Set `GOOGLE_SERVICE_ACCOUNT_FILE` to the path of the JSON key file
 6. Set `GOOGLE_SHEET_ID` to your sheet's ID (from the URL)
+
+Alternatively, configure predetermined accounts via `PREDETERMINED_ACCOUNTS` environment variable (comma-separated). When set, the endpoint validates `BillRefNumber` against that list. If `GOOGLE_SERVICE_ACCOUNT_FILE` and `GOOGLE_SHEET_ID` are provided, the app will still attempt to write transaction rows to the sheet in the background.
 
 ### Fallback Test Accounts
 
@@ -237,7 +239,10 @@ curl -X POST http://localhost:8000/api/daraja/c2b/ \
 - Dynamic account validation via Google Sheets API
 - Caching to reduce API calls (configurable TTL)
 - Fallback to hardcoded test accounts
-- Async forwarding to Apps Script with retry logic
+ - Account validation via predetermined env list or Google Sheets
+ - Caching to reduce API calls (configurable TTL)
+ - Fallback to hardcoded test accounts
+ - Async background writes directly to Google Sheets (no blocking Daraja response)
 - Proper Daraja response codes (0 = accepted, 1 = rejected)
 - Comprehensive logging of all validations and errors
 - Environment-based configuration
@@ -251,30 +256,7 @@ curl -X POST http://localhost:8000/api/daraja/c2b/ \
 - Request/response audit trail
 
 ## Apps Script Integration
-
-Your Google Apps Script should accept POST requests with the full callback payload and log to a sheet:
-
-```javascript
-// Google Apps Script function
-function doPost(e) {
-  const sheet = SpreadsheetApp.getActiveSheet();
-  const data = JSON.parse(e.postData.contents);
-  
-  sheet.appendRow([
-    new Date(),
-    data.TransID,
-    data.BillRefNumber,
-    data.MSISDN,
-    data.TransAmount,
-    data.TransTime,
-    'Logged'
-  ]);
-  
-  return ContentService.createTextOutput(JSON.stringify({
-    status: 'success'
-  })).setMimeType(ContentService.MimeType.JSON);
-}
-```
+This project no longer relies on Google Apps Script for logging. Transactions are written directly to the configured Google Sheet using the Sheets API in a background thread so Daraja responses are not blocked.
 
 ## Production Deployment
 

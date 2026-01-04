@@ -11,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
 
-from .google_sheets import get_accounts
+from .google_sheets import is_valid_account, write_payment_async
 from .serializers import DarajaC2BCallbackSerializer
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,6 @@ _processed_transids = set()
 
 # Config via env
 SPREADSHEET_ID = os.environ.get('GOOGLE_SHEET_ID')
-APPS_SCRIPT_URL='https://script.google.com/macros/s/AKfycbxk98IJLYUWWn3YhYQTkm9cE99f9bdKYOg4SYXftRnddbadaxA-AO_plfOF5MaSLJpbpw/exec'
 
 # Request timeouts
 HTTP_TIMEOUT = float(os.environ.get('C2B_HTTP_TIMEOUT', '3.0'))
@@ -79,47 +78,24 @@ def daraja_c2b_callback(request):
         logger.info('Duplicate transaction: %s', trans_id)
         return _daraja_response(1, 'Rejected: Duplicate transaction')
 
-    # Fetch valid accounts
-    try:
-        accounts = get_accounts(SPREADSHEET_ID)
-    except Exception as e:
-        logger.exception('Error fetching accounts: %s', e)
-        return _daraja_response(1, 'Rejected: Server error')
-
-    if bill_ref not in accounts:
-        logger.info('Invalid BillRefNumber: %s (not in accounts list)', bill_ref)
+    # Validate account against predetermined list
+    if not is_valid_account(bill_ref):
+        logger.info('Invalid BillRefNumber: %s (not in predetermined accounts)', bill_ref)
         return _daraja_response(1, 'Rejected: Invalid account')
 
-    # Forward to Apps Script if configured
-    if APPS_SCRIPT_URL:
-        headers = {'Content-Type': 'application/json'}
-        success = False
-        last_err = None
-        for attempt in range(2):
-            try:
-                resp = requests.post(
-                    APPS_SCRIPT_URL,
-                    json=payload,
-                    headers=headers,
-                    timeout=HTTP_TIMEOUT
-                )
-                if resp.status_code in (200, 201, 204):
-                    success = True
-                    logger.info('Forwarded to Apps Script: %s', trans_id)
-                    break
-                else:
-                    last_err = f'status {resp.status_code}'
-                    logger.warning('Apps Script responded %s: %s', resp.status_code, resp.text[:200])
-            except Exception as e:
-                last_err = str(e)
-                logger.exception('Failed to forward to Apps Script (attempt %s): %s', attempt + 1, e)
-                time.sleep(0.2)
-
-        if not success:
-            logger.error('Forwarding failed after retries: %s', last_err)
-            return _daraja_response(1, 'Rejected: Forwarding failed')
-    else:
-        logger.warning('APPS_SCRIPT_URL not configured, skipping forwarding')
+    # Fire-and-forget write to Google Sheets; do not block Daraja response
+    try:
+        payment = {
+            'transId': trans_id,
+            'time': validated_data.get('TransTime') or '',
+            'amount': trans_amount,
+            'name': ' '.join(filter(None, [validated_data.get('FirstName'), validated_data.get('MiddleName'), validated_data.get('LastName')])),
+            'phone': validated_data.get('MSISDN') or validated_data.get('MSISDN'),
+            'accountNumber': bill_ref,
+        }
+        write_payment_async(payment, spreadsheet_id=SPREADSHEET_ID)
+    except Exception:
+        logger.exception('Failed to start background sheet write for %s', trans_id)
 
     # Mark as processed
     _processed_transids.add(trans_id)
