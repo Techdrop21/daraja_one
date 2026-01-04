@@ -14,9 +14,8 @@ _cache = {
     'fetched_at': 0,
 }
 
-CACHE_TTL = int(os.environ.get('ACCOUNTS_CACHE_TTL', '120'))  # seconds
+CACHE_TTL = int(os.environ.get('ACCOUNTS_CACHE_TTL', '120'))
 
-# Fallback accounts for testing/development
 FALLBACK_ACCOUNTS = [
     '600000',  # Sandbox ShortCode
     '600001',
