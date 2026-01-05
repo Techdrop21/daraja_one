@@ -7,6 +7,14 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from threading import Thread
 
+from .config import (
+    GOOGLE_SERVICE_ACCOUNT_FILE,
+    GOOGLE_SHEET_ID,
+    ACCOUNTS_CACHE_TTL,
+    PREDETERMINED_ACCOUNTS_ENV,
+    DEBUG_SHEETS,
+)
+
 logger = logging.getLogger(__name__)
 
 # Simple in-memory cache
@@ -15,22 +23,25 @@ _cache = {
     'fetched_at': 0,
 }
 
-CACHE_TTL = int(os.environ.get('ACCOUNTS_CACHE_TTL', '120'))
-
 # Default predetermined accounts; can be overridden by PREDETERMINED_ACCOUNTS env var
 FALLBACK_ACCOUNTS = [
     '600000',  # Sandbox ShortCode
     '600001',
     '600002',
+    '600003',  # Additional test account
     'TEST001',
     'TEST002',
+    'ACC004',  # Test account from simulation
 ]
 
 
 def _get_service(write: bool = False):
-    keyfile = os.environ.get('GOOGLE_SERVICE_ACCOUNT_FILE')
-    if not keyfile:
-        raise RuntimeError('GOOGLE_SERVICE_ACCOUNT_FILE not set')
+    # Use centralized config
+    keyfile = GOOGLE_SERVICE_ACCOUNT_FILE
+
+    if not os.path.exists(keyfile):
+        raise RuntimeError(f'Google service account file not found: {keyfile!s}')
+
     scopes = ['https://www.googleapis.com/auth/spreadsheets'] if write else ['https://www.googleapis.com/auth/spreadsheets.readonly']
     creds = service_account.Credentials.from_service_account_file(keyfile, scopes=scopes)
     return build('sheets', 'v4', credentials=creds)
@@ -41,9 +52,8 @@ def get_predetermined_accounts() -> List[str]:
 
     The env var PREDETERMINED_ACCOUNTS may contain a comma-separated list.
     """
-    env = os.environ.get('PREDETERMINED_ACCOUNTS')
-    if env:
-        accounts = [a.strip() for a in env.split(',') if a.strip()]
+    if PREDETERMINED_ACCOUNTS_ENV:
+        accounts = [a.strip() for a in PREDETERMINED_ACCOUNTS_ENV.split(',') if a.strip()]
         if accounts:
             return accounts
     return FALLBACK_ACCOUNTS
@@ -87,16 +97,25 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     payment should contain: transId, time, amount, name, phone, accountNumber
     """
     if not spreadsheet_id:
-        spreadsheet_id = os.environ.get('GOOGLE_SHEET_ID')
+        spreadsheet_id = GOOGLE_SHEET_ID
     if not spreadsheet_id:
         logger.warning('No GOOGLE_SHEET_ID configured; skipping sheet write')
         return False
 
-    service = _get_service(write=True)
+    try:
+        logger.debug('Attempting to initialize Google Sheets service for write')
+        service = _get_service(write=True)
+        logger.debug('Google Sheets service initialized successfully')
+    except Exception as e:
+        logger.error('Failed to initialize Google Sheets service: %s', e, exc_info=True)
+        return False
 
     safe_account = _sanitize_sheet_name(str(payment.get('accountNumber') or 'unknown'))
+    logger.debug('Sanitized account name: %s', safe_account)
+    
     # Ensure sheet exists
-    _ensure_sheet_exists(service, spreadsheet_id, safe_account)
+    if not _ensure_sheet_exists(service, spreadsheet_id, safe_account):
+        logger.error('Failed to ensure sheet %s exists', safe_account)
 
     row = [
         payment.get('transId') or '',
@@ -109,6 +128,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     range_name = f"{safe_account}!A:E"
     body = {'values': [row]}
     try:
+        logger.debug('Appending row to sheet %s: %s', safe_account, row)
         service.spreadsheets().values().append(
             spreadsheetId=spreadsheet_id,
             range=range_name,
@@ -116,10 +136,10 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
             insertDataOption='INSERT_ROWS',
             body=body
         ).execute()
-        logger.info('Wrote payment %s to sheet %s', payment.get('transId'), safe_account)
+        logger.info('Successfully wrote payment %s to sheet %s (account: %s)', payment.get('transId'), spreadsheet_id, safe_account)
         return True
-    except Exception:
-        logger.exception('Failed to append payment to sheet %s', safe_account)
+    except Exception as e:
+        logger.error('Failed to append payment to sheet %s: %s', safe_account, e, exc_info=True)
         return False
 
 

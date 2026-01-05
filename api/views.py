@@ -13,17 +13,18 @@ from rest_framework import status
 
 from .google_sheets import is_valid_account, write_payment_async
 from .serializers import DarajaC2BCallbackSerializer
+from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 # In-memory processed transaction IDs
 _processed_transids = set()
 
-# Config via env
-SPREADSHEET_ID = os.environ.get('GOOGLE_SHEET_ID')
+# Config via centralized config module
+SPREADSHEET_ID = GOOGLE_SHEET_ID
 
 # Request timeouts
-HTTP_TIMEOUT = float(os.environ.get('C2B_HTTP_TIMEOUT', '3.0'))
+HTTP_TIMEOUT = C2B_HTTP_TIMEOUT
 
 
 def _daraja_response(code: int, desc: str):
@@ -72,6 +73,7 @@ def daraja_c2b_callback(request):
     bill_ref = str(validated_data.get('BillRefNumber'))
     trans_id = str(validated_data.get('TransID'))
     trans_amount = float(validated_data.get('TransAmount'))
+    phone = validated_data.get('MSISDN') or validated_data.get('Msisdn') or ''
 
     # Duplicate check
     if trans_id in _processed_transids:
@@ -90,7 +92,7 @@ def daraja_c2b_callback(request):
             'time': validated_data.get('TransTime') or '',
             'amount': trans_amount,
             'name': ' '.join(filter(None, [validated_data.get('FirstName'), validated_data.get('MiddleName'), validated_data.get('LastName')])),
-            'phone': validated_data.get('MSISDN') or validated_data.get('MSISDN'),
+            'phone': phone,
             'accountNumber': bill_ref,
         }
         write_payment_async(payment, spreadsheet_id=SPREADSHEET_ID)
@@ -112,3 +114,45 @@ def daraja_validation_endpoint(request):
     Respond immediately to unblock the request flow.
     """
     return _daraja_response(0, 'Validation successful')
+
+
+@api_view(['POST'])
+def daraja_test_sheet_write(request):
+    """DEBUG ENDPOINT: Test synchronous sheet write.
+    
+    POST payload example:
+    {
+        "transId": "TEST123",
+        "time": "20260105120000",
+        "amount": "100.00",
+        "name": "Test User",
+        "phone": "254712345678",
+        "accountNumber": "600000"
+    }
+    
+    Returns diagnostics about the write attempt (even if failed).
+    """
+    try:
+        if isinstance(request.data, dict):
+            payload = request.data
+        else:
+            payload = json.loads(request.body.decode('utf-8'))
+    except Exception as e:
+        logger.warning('Invalid JSON in test write: %s', e)
+        return Response(
+            {'error': f'Invalid JSON: {e}', 'success': False},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Call synchronous write (not async)
+    from .google_sheets import write_payment_to_sheet
+    success = write_payment_to_sheet(payload, spreadsheet_id=SPREADSHEET_ID)
+    
+    return Response(
+        {
+            'success': success,
+            'message': 'Sheet write attempted (check server logs for details)',
+            'payload_received': payload,
+        },
+        status=status.HTTP_200_OK
+    )
