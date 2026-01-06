@@ -156,6 +156,56 @@ def write_payment_async(payment: Dict[str, Any], spreadsheet_id: str = None):
     return True
 
 
+def check_transaction_exists(trans_id: str, spreadsheet_id: str = None) -> bool:
+    """Check if a TransID already exists in any sheet in the spreadsheet.
+    
+    Returns True if found, False otherwise or on error.
+    """
+    if not spreadsheet_id:
+        spreadsheet_id = GOOGLE_SHEET_ID
+    if not spreadsheet_id:
+        logger.warning('No GOOGLE_SHEET_ID configured; cannot check for duplicate TransID')
+        return False
+
+    try:
+        service = _get_service(write=False)
+    except Exception as e:
+        logger.error('Failed to initialize Sheets service for duplicate check: %s', e)
+        return False
+
+    try:
+        # Get all sheets in the spreadsheet
+        meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id, fields='sheets.properties').execute()
+        sheets = meta.get('sheets', [])
+        
+        # Search each sheet for the TransID
+        for sheet in sheets:
+            sheet_name = sheet.get('properties', {}).get('title')
+            if not sheet_name:
+                continue
+            
+            try:
+                # Query the first column (A) for TransID matches
+                result = service.spreadsheets().values().get(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{sheet_name}!A:A"
+                ).execute()
+                
+                values = result.get('values', [])
+                # Check if trans_id exists in column A (skip header if present)
+                if trans_id in [str(v[0]) if v else '' for v in values]:
+                    logger.info('Found duplicate TransID %s in sheet %s', trans_id, sheet_name)
+                    return True
+            except Exception as e:
+                logger.debug('Error checking sheet %s for TransID %s: %s', sheet_name, trans_id, e)
+                continue
+        
+        return False
+    except Exception as e:
+        logger.error('Error checking transaction existence: %s', e, exc_info=True)
+        return False
+
+
 def clear_cache():
     """Clear the accounts cache (useful for testing)."""
     _cache['accounts'] = None

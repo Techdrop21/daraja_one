@@ -11,14 +11,11 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
 
-from .google_sheets import is_valid_account, write_payment_async
+from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists
 from .serializers import DarajaC2BCallbackSerializer
 from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
 
 logger = logging.getLogger(__name__)
-
-# In-memory processed transaction IDs
-_processed_transids = set()
 
 # Config via centralized config module
 SPREADSHEET_ID = GOOGLE_SHEET_ID
@@ -66,7 +63,7 @@ def daraja_c2b_callback(request):
     serializer = DarajaC2BCallbackSerializer(data=payload)
     if not serializer.is_valid():
         errors = '; '.join([f"{k}: {v[0]}" for k, v in serializer.errors.items()])
-        logger.warning('Validation error: %s', errors)
+        logger.error('PROD: Serializer validation failed. Payload keys: %s, Errors: %s', list(payload.keys()), errors)
         return _daraja_response(1, f'Rejected: {errors}')
 
     validated_data = serializer.validated_data
@@ -74,10 +71,12 @@ def daraja_c2b_callback(request):
     trans_id = str(validated_data.get('TransID'))
     trans_amount = float(validated_data.get('TransAmount'))
     phone = validated_data.get('MSISDN') or validated_data.get('Msisdn') or ''
+    
+    logger.debug('PROD: Processing C2B. Payload keys: %s, TransID: %s, BillRefNumber: %s', list(payload.keys()), trans_id, bill_ref)
 
-    # Duplicate check
-    if trans_id in _processed_transids:
-        logger.info('Duplicate transaction: %s', trans_id)
+    # Duplicate check (query sheets for existing TransID)
+    if check_transaction_exists(trans_id, spreadsheet_id=SPREADSHEET_ID):
+        logger.info('Duplicate transaction in sheets: %s', trans_id)
         return _daraja_response(1, 'Rejected: Duplicate transaction')
 
     # Validate account against predetermined list
@@ -85,7 +84,7 @@ def daraja_c2b_callback(request):
         logger.info('Invalid BillRefNumber: %s (not in predetermined accounts)', bill_ref)
         return _daraja_response(1, 'Rejected: Invalid account')
 
-    # Fire-and-forget write to Google Sheets; do not block Daraja response
+    # Synchronous write to Google Sheets (was async, now blocking for reliability)
     try:
         payment = {
             'transId': trans_id,
@@ -95,12 +94,14 @@ def daraja_c2b_callback(request):
             'phone': phone,
             'accountNumber': bill_ref,
         }
-        write_payment_async(payment, spreadsheet_id=SPREADSHEET_ID)
-    except Exception:
-        logger.exception('Failed to start background sheet write for %s', trans_id)
+        success = write_payment_to_sheet(payment, spreadsheet_id=SPREADSHEET_ID)
+        if not success:
+            logger.error('PROD: Sheet write failed for TransID %s. Payment: %s', trans_id, payment)
+            # Still return success to Daraja, but log the failure
+    except Exception as e:
+        logger.exception('PROD: Exception during sheet write for %s. Error: %s', trans_id, e)
+        # Still return success to Daraja
 
-    # Mark as processed
-    _processed_transids.add(trans_id)
     logger.info('Accepted transaction %s for account %s amount %.2f', trans_id, bill_ref, trans_amount)
 
     return _daraja_response(0, 'Accepted')

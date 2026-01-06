@@ -1,0 +1,81 @@
+DEBUG 2026-01-05 17:21:07,530 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmpoi_xdnfp.json)
+DEBUG 2026-01-05 17:24:38,413 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmpjbwbzepr.json)
+DEBUG 2026-01-05 17:25:03,003 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmpsbcdohd1.json)
+DEBUG 2026-01-05 17:25:10,439 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmp_576irg4.json)
+DEBUG 2026-01-05 17:25:12,179 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmpnc9j9n5x.json)
+DEBUG 2026-01-05 17:32:38,904 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmpizvj_2fn.json)
+DEBUG 2026-01-05 17:32:40,643 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmp4q3rptq8.json)
+DEBUG 2026-01-05 17:32:45,124 api.google_sheets Attempting to initialize Google Sheets service for write
+DEBUG 2026-01-05 17:32:45,189 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-05 17:32:45,189 api.google_sheets Sanitized account name: ACC001
+DEBUG 2026-01-05 17:32:49,520 api.google_sheets Appending row to sheet ACC001: ['TEST123', '20260105120000', '100.00', 'Test User', '254712345678']
+INFO 2026-01-05 17:32:50,658 api.google_sheets Successfully wrote payment TEST123 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: ACC001)
+DEBUG 2026-01-05 17:33:36,619 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-028', 'TransTime': '20260104120000', 'TransAmount': Decimal('100.50'), 'BusinessShortCode': '600000', 'BillRefNumber': 'ACC004', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chemosi T', 'MiddleName': '', 'LastName': 'User'}
+DEBUG 2026-01-05 17:33:36,620 api.google_sheets Attempting to initialize Google Sheets service for write
+INFO 2026-01-05 17:33:36,620 api.views Accepted transaction TEST-028 for account ACC004 amount 100.50
+DEBUG 2026-01-05 17:33:36,658 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-05 17:33:36,659 api.google_sheets Sanitized account name: ACC004
+DEBUG 2026-01-05 17:33:40,586 api.google_sheets Appending row to sheet ACC004: ['TEST-028', '20260104120000', 100.5, 'Chemosi T User', '254700000000']
+INFO 2026-01-05 17:33:41,540 api.google_sheets Successfully wrote payment TEST-028 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: ACC004)
+DEBUG 2026-01-06 12:07:47,726 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmphi5zadg2.json)
+DEBUG 2026-01-06 12:07:51,520 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmp56_02z10.json)
+DEBUG 2026-01-06 12:10:52,399 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-0221', 'TransTime': '20260104120000', 'TransAmount': Decimal('50500.00'), 'BusinessShortCode': '600000', 'BillRefNumber': '600000', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chris Worth', 'MiddleName': '', 'LastName': 'User'}
+DEBUG 2026-01-06 12:10:52,400 api.google_sheets Attempting to initialize Google Sheets service for write
+INFO 2026-01-06 12:10:52,400 api.views Accepted transaction TEST-0221 for account 600000 amount 50500.00
+DEBUG 2026-01-06 12:10:52,486 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 12:10:52,486 api.google_sheets Sanitized account name: 600000
+DEBUG 2026-01-06 12:10:56,293 api.google_sheets Appending row to sheet 600000: ['TEST-0221', '20260104120000', 50500.0, 'Chris Worth User', '254700000000']
+INFO 2026-01-06 12:10:57,105 api.google_sheets Successfully wrote payment TEST-0221 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: 600000)
+DEBUG 2026-01-06 12:11:32,038 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-0201', 'TransTime': '20260104120000', 'TransAmount': Decimal('50500.00'), 'BusinessShortCode': '600000', 'BillRefNumber': '600000', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chris Worth 2', 'MiddleName': '', 'LastName': 'User'}
+DEBUG 2026-01-06 12:11:32,039 api.google_sheets Attempting to initialize Google Sheets service for write
+INFO 2026-01-06 12:11:32,039 api.views Accepted transaction TEST-0201 for account 600000 amount 50500.00
+DEBUG 2026-01-06 12:11:32,083 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 12:11:32,083 api.google_sheets Sanitized account name: 600000
+DEBUG 2026-01-06 12:11:36,053 api.google_sheets Appending row to sheet 600000: ['TEST-0201', '20260104120000', 50500.0, 'Chris Worth 2 User', '254700000000']
+INFO 2026-01-06 12:11:36,908 api.google_sheets Successfully wrote payment TEST-0201 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: 600000)
+DEBUG 2026-01-06 12:12:05,689 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-0231', 'TransTime': '20260104120000', 'TransAmount': Decimal('5050.00'), 'BusinessShortCode': '600000', 'BillRefNumber': '600000', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chris Worth 2', 'MiddleName': '', 'LastName': 'User'}
+DEBUG 2026-01-06 12:12:05,690 api.google_sheets Attempting to initialize Google Sheets service for write
+INFO 2026-01-06 12:12:05,690 api.views Accepted transaction TEST-0231 for account 600000 amount 5050.00
+DEBUG 2026-01-06 12:12:05,712 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 12:12:05,712 api.google_sheets Sanitized account name: 600000
+DEBUG 2026-01-06 12:12:09,571 api.google_sheets Appending row to sheet 600000: ['TEST-0231', '20260104120000', 5050.0, 'Chris Worth 2 User', '254700000000']
+INFO 2026-01-06 12:12:10,529 api.google_sheets Successfully wrote payment TEST-0231 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: 600000)
+DEBUG 2026-01-06 12:13:42,273 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-0031', 'TransTime': '20260104120000', 'TransAmount': Decimal('5050.00'), 'BusinessShortCode': '600000', 'BillRefNumber': '600000', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chris Worth 2', 'MiddleName': '', 'LastName': 'User'}
+DEBUG 2026-01-06 12:13:42,274 api.google_sheets Attempting to initialize Google Sheets service for write
+INFO 2026-01-06 12:13:42,274 api.views Accepted transaction TEST-0031 for account 600000 amount 5050.00
+DEBUG 2026-01-06 12:13:42,299 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 12:13:42,299 api.google_sheets Sanitized account name: 600000
+DEBUG 2026-01-06 12:13:46,224 api.google_sheets Appending row to sheet 600000: ['TEST-0031', '20260104120000', 5050.0, 'Chris Worth 2 User', '254700000000']
+INFO 2026-01-06 12:13:46,893 api.google_sheets Successfully wrote payment TEST-0031 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: 600000)
+DEBUG 2026-01-06 13:13:48,564 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmpe12ymdn0.json)
+DEBUG 2026-01-06 13:13:55,304 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmps12me35q.json)
+DEBUG 2026-01-06 13:14:54,477 api.google_sheets Attempting to initialize Google Sheets service for write
+DEBUG 2026-01-06 13:14:54,512 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 13:14:54,512 api.google_sheets Sanitized account name: unknown
+DEBUG 2026-01-06 13:15:02,638 api.google_sheets Appending row to sheet unknown: ['', '', '', '', '']
+INFO 2026-01-06 13:15:03,240 api.google_sheets Successfully wrote payment None to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: unknown)
+DEBUG 2026-01-06 13:21:06,717 api.google_sheets Attempting to initialize Google Sheets service for write
+DEBUG 2026-01-06 13:21:06,771 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 13:21:06,771 api.google_sheets Sanitized account name: ACC001
+DEBUG 2026-01-06 13:21:12,330 api.google_sheets Appending row to sheet ACC001: ['TEST-C2B-001', '20260105123045', 100.0, 'Test User', '254712345678']
+INFO 2026-01-06 13:21:13,673 api.google_sheets Successfully wrote payment TEST-C2B-001 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: ACC001)
+DEBUG 2026-01-06 13:34:18,118 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-0201', 'TransTime': '20260104120000', 'TransAmount': Decimal('505.00'), 'BusinessShortCode': '600000', 'BillRefNumber': '600000', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chemosi T', 'MiddleName': '', 'LastName': 'User'}
+DEBUG 2026-01-06 13:34:18,119 api.google_sheets Attempting to initialize Google Sheets service for write
+INFO 2026-01-06 13:34:18,120 api.views Accepted transaction TEST-0201 for account 600000 amount 505.00
+DEBUG 2026-01-06 13:34:18,134 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 13:34:18,134 api.google_sheets Sanitized account name: 600000
+DEBUG 2026-01-06 13:34:22,275 api.google_sheets Appending row to sheet 600000: ['TEST-0201', '20260104120000', 505.0, 'Chemosi T User', '254700000000']
+INFO 2026-01-06 13:34:23,369 api.google_sheets Successfully wrote payment TEST-0201 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: 600000)
+DEBUG 2026-01-06 13:34:44,291 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-0201', 'TransTime': '20260104120000', 'TransAmount': Decimal('205.00'), 'BusinessShortCode': '600000', 'BillRefNumber': '600000', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chemosi T', 'MiddleName': '', 'LastName': 'User'}
+INFO 2026-01-06 13:34:44,291 api.views Duplicate transaction: TEST-0201
+DEBUG 2026-01-06 13:35:10,781 api.serializers Normalized validation data: {'TransactionType': 'Pay Bill Online', 'TransID': 'TEST-0261', 'TransTime': '20260104120000', 'TransAmount': Decimal('205.00'), 'BusinessShortCode': '600000', 'BillRefNumber': '600000', 'InvoiceNumber': '', 'MSISDN': '254700000000', 'FirstName': 'Chemosi T', 'MiddleName': '', 'LastName': 'User'}
+DEBUG 2026-01-06 13:35:10,781 api.google_sheets Attempting to initialize Google Sheets service for write
+INFO 2026-01-06 13:35:10,782 api.views Accepted transaction TEST-0261 for account 600000 amount 205.00
+DEBUG 2026-01-06 13:35:10,803 api.google_sheets Google Sheets service initialized successfully
+DEBUG 2026-01-06 13:35:10,803 api.google_sheets Sanitized account name: 600000
+DEBUG 2026-01-06 13:35:15,200 api.google_sheets Appending row to sheet 600000: ['TEST-0261', '20260104120000', 205.0, 'Chemosi T User', '254700000000']
+INFO 2026-01-06 13:35:16,312 api.google_sheets Successfully wrote payment TEST-0261 to sheet 1BXs5x45TyvG0rilyqciMOvpuefgt5YAYFi-yc3bvUhY (account: 600000)
+DEBUG 2026-01-06 13:57:17,083 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmpqsjevn0_.json)
+DEBUG 2026-01-06 13:57:28,603 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmp4rp75nzk.json)
+DEBUG 2026-01-06 13:57:36,058 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmplf054e75.json)
+DEBUG 2026-01-06 13:57:46,687 api.config Using Google credentials from environment variables (temp file: C:\Users\Mg\AppData\Local\Temp\tmp_4t63fbi.json)
