@@ -32,6 +32,9 @@ FALLBACK_ACCOUNTS = [
     'TEST001',
     'TEST002',
     'ACC004',  # Test account from simulation
+    'ACC001',  # Test account from simulation
+    'ACC006',  # Test account from simulation
+    'ACC002',  # Test account from simulation
 ]
 
 
