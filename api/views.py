@@ -131,6 +131,7 @@ def daraja_test_sheet_write(request):
         "accountNumber": "600000"
     }
     
+    Only accepts predetermined accounts. Returns error for non-predetermined accounts.
     Returns diagnostics about the write attempt (even if failed).
     """
     try:
@@ -142,6 +143,18 @@ def daraja_test_sheet_write(request):
         logger.warning('Invalid JSON in test write: %s', e)
         return Response(
             {'error': f'Invalid JSON: {e}', 'success': False},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Validate account first
+    account_number = str(payload.get('accountNumber', ''))
+    if not is_valid_account(account_number):
+        return Response(
+            {
+                'error': f'Invalid account: {account_number} is not in predetermined accounts',
+                'success': False,
+                'payload_received': payload,
+            },
             status=status.HTTP_400_BAD_REQUEST
         )
 

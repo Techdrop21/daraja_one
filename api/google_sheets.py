@@ -110,11 +110,19 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     """Write a payment row to the spreadsheet. This is synchronous; use the async wrapper to fire-and-forget.
 
     payment should contain: transId, time, amount, name, phone, accountNumber
+    
+    Only writes to predetermined accounts. Ignores requests for non-predetermined accounts.
     """
     if not spreadsheet_id:
         spreadsheet_id = GOOGLE_SHEET_ID
     if not spreadsheet_id:
         logger.warning('No GOOGLE_SHEET_ID configured; skipping sheet write')
+        return False
+
+    # Validate account against predetermined list
+    account_number = str(payment.get('accountNumber') or '')
+    if not is_valid_account(account_number):
+        logger.warning('Ignoring payment for non-predetermined account: %s (TransID: %s)', account_number, payment.get('transId'))
         return False
 
     try:
@@ -125,7 +133,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         logger.error('Failed to initialize Google Sheets service: %s', e, exc_info=True)
         return False
 
-    safe_account = _sanitize_sheet_name(str(payment.get('accountNumber') or 'unknown'))
+    safe_account = _sanitize_sheet_name(account_number)
     logger.debug('Sanitized account name: %s', safe_account)
     
     # Ensure sheet exists
