@@ -86,11 +86,15 @@ def daraja_c2b_callback(request):
 
     # Synchronous write to Google Sheets (was async, now blocking for reliability)
     try:
+        full_name = ' '.join(filter(None, [validated_data.get('FirstName'), validated_data.get('MiddleName'), validated_data.get('LastName')]))
+        # Convert to title case (capitalize first letter of each word)
+        title_case_name = full_name.title() if full_name else ''
+        
         payment = {
             'transId': trans_id,
             'time': validated_data.get('TransTime') or '',
             'amount': trans_amount,
-            'name': ' '.join(filter(None, [validated_data.get('FirstName'), validated_data.get('MiddleName'), validated_data.get('LastName')])),
+            'name': title_case_name,
             'phone': phone,
             'accountNumber': bill_ref,
         }
