@@ -3,7 +3,6 @@ import json
 import logging
 import time
 from typing import Dict, Any
-from datetime import datetime
 
 import requests
 from django.http import JsonResponse
@@ -12,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
 
-from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists
+from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists, normalize_phone
 from .serializers import DarajaC2BCallbackSerializer
 from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
 
@@ -23,73 +22,6 @@ SPREADSHEET_ID = GOOGLE_SHEET_ID
 
 # Request timeouts
 HTTP_TIMEOUT = C2B_HTTP_TIMEOUT
-
-
-def _normalize_daraja_data(validated_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize Daraja callback data for sheet writing.
-    
-    - Formats phone numbers consistently (masks long hashes, formats Kenyan numbers)
-    - Formats transaction time as readable date/time
-    - Truncates or formats BillRefNumber if it's a long hash
-    - Formats amount with currency
-    - Cleans up name fields
-    
-    Returns normalized payment dict suitable for sheet writing.
-    """
-    trans_id = str(validated_data.get('TransID', ''))
-    trans_time = validated_data.get('TransTime', '')
-    trans_amount = float(validated_data.get('TransAmount', 0))
-    bill_ref = str(validated_data.get('BillRefNumber', ''))
-    phone = validated_data.get('MSISDN') or validated_data.get('Msisdn') or ''
-    first_name = validated_data.get('FirstName', '').strip()
-    middle_name = validated_data.get('MiddleName', '').strip()
-    last_name = validated_data.get('LastName', '').strip()
-    
-    # Format phone number: mask long hashes, format regular numbers
-    if phone:
-        phone_str = str(phone)
-        if len(phone_str) > 20:  # Likely a hash, truncate and indicate it's masked
-            phone_formatted = f"{phone_str[:12]}... (masked)"
-        else:
-            # Kenyan numbers: format as +254XXXXXXXXX or 254XXXXXXXXX
-            phone_str = phone_str.lstrip('0').lstrip('+')
-            if not phone_str.startswith('254'):
-                phone_formatted = f"+254{phone_str}" if len(phone_str) >= 9 else phone_str
-            else:
-                phone_formatted = f"+{phone_str}"
-    else:
-        phone_formatted = ''
-    
-    # Format transaction time: convert from YYYYMMDDHHmmss to readable format
-    time_formatted = trans_time
-    if trans_time and len(trans_time) >= 14:
-        try:
-            dt = datetime.strptime(trans_time[:14], '%Y%m%d%H%M%S')
-            time_formatted = dt.strftime('%d/%m/%Y %H:%M:%S')
-        except ValueError:
-            logger.debug('Could not parse TransTime %s, using as-is', trans_time)
-    
-    # Format BillRefNumber: if it's a long hash, truncate it
-    if bill_ref and len(bill_ref) > 20:
-        bill_ref_display = f"{bill_ref[:12]}..."
-    else:
-        bill_ref_display = bill_ref
-    
-    # Combine name fields, clean up whitespace
-    name = ' '.join(filter(None, [first_name, middle_name, last_name])) or 'N/A'
-    
-    # Format amount
-    amount_formatted = f"KES {trans_amount:,.2f}"
-    
-    return {
-        'transId': trans_id,
-        'time': time_formatted,
-        'amount': amount_formatted,
-        'name': name,
-        'phone': phone_formatted,
-        'accountNumber': bill_ref,
-        'rawAmount': trans_amount,  # Keep raw for calculations if needed
-    }
 
 
 def _daraja_response(code: int, desc: str):
@@ -138,7 +70,7 @@ def daraja_c2b_callback(request):
     bill_ref = str(validated_data.get('BillRefNumber'))
     trans_id = str(validated_data.get('TransID'))
     trans_amount = float(validated_data.get('TransAmount'))
-    phone = validated_data.get('MSISDN') or validated_data.get('Msisdn') or ''
+    phone = normalize_phone(validated_data.get('MSISDN') or validated_data.get('Msisdn') or '')
     
     logger.debug('PROD: Processing C2B. Payload keys: %s, TransID: %s, BillRefNumber: %s', list(payload.keys()), trans_id, bill_ref)
 
@@ -154,8 +86,14 @@ def daraja_c2b_callback(request):
 
     # Synchronous write to Google Sheets (was async, now blocking for reliability)
     try:
-        # Normalize data for clean sheet output
-        payment = _normalize_daraja_data(validated_data)
+        payment = {
+            'transId': trans_id,
+            'time': validated_data.get('TransTime') or '',
+            'amount': trans_amount,
+            'name': ' '.join(filter(None, [validated_data.get('FirstName'), validated_data.get('MiddleName'), validated_data.get('LastName')])),
+            'phone': phone,
+            'accountNumber': bill_ref,
+        }
         success = write_payment_to_sheet(payment, spreadsheet_id=SPREADSHEET_ID)
         if not success:
             logger.error('PROD: Sheet write failed for TransID %s. Payment: %s', trans_id, payment)
@@ -209,7 +147,7 @@ def daraja_test_sheet_write(request):
         )
 
     # Validate account first
-    account_number = str(payload.get('accountNumber', '') or payload.get('BillRefNumber', ''))
+    account_number = str(payload.get('accountNumber', ''))
     if not is_valid_account(account_number):
         return Response(
             {
@@ -220,19 +158,15 @@ def daraja_test_sheet_write(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # Normalize the test payload (similar to production data)
-    normalized_payment = _normalize_daraja_data(payload)
-    
     # Call synchronous write (not async)
     from .google_sheets import write_payment_to_sheet
-    success = write_payment_to_sheet(normalized_payment, spreadsheet_id=SPREADSHEET_ID)
+    success = write_payment_to_sheet(payload, spreadsheet_id=SPREADSHEET_ID)
     
     return Response(
         {
             'success': success,
             'message': 'Sheet write attempted (check server logs for details)',
             'payload_received': payload,
-            'normalized_data': normalized_payment,
         },
         status=status.HTTP_200_OK
     )

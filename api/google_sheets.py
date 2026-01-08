@@ -85,14 +85,30 @@ def _sanitize_sheet_name(name: str) -> str:
     return name.replace('\\', '_').replace('/', '_').replace('?', '_').replace('*', '_').replace('[', '_').replace(']', '_')
 
 
-def _ensure_sheet_exists(service, spreadsheet_id: str, sheet_name: str):
+def normalize_phone(phone: str) -> str:
+    """Normalize phone number by removing spaces, dashes, and other non-digit characters.
+    
+    Preserves the phone number digits and the leading '+' if present.
+    """
+    if not phone:
+        return ''
+    
+    # Remove common separators and spaces, but keep digits and leading +
+    normalized = ''.join(c for c in str(phone).strip() if c.isdigit() or c == '+')
+    return normalized
+
+
+def _ensure_sheet_exists(service, spreadsheet_id: str, sheet_name: str) -> tuple:
+    """Check if sheet exists; if not, create it. Returns (exists, is_new)."""
     # Check existing sheets
     meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id, fields='sheets.properties').execute()
     sheets = meta.get('sheets', [])
     names = [s.get('properties', {}).get('title') for s in sheets]
+    
     if sheet_name in names:
-        return True
-    # Add sheet
+        return True, False
+    
+    # Sheet doesn't exist, create it
     requests_body = {
         'requests': [
             {'addSheet': {'properties': {'title': sheet_name}}}
@@ -100,10 +116,10 @@ def _ensure_sheet_exists(service, spreadsheet_id: str, sheet_name: str):
     }
     try:
         service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=requests_body).execute()
-        return True
+        return True, True  # Created successfully and is new
     except Exception:
         logger.exception('Failed to create sheet %s in spreadsheet %s', sheet_name, spreadsheet_id)
-        return False
+        return False, False
 
 
 def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
@@ -136,16 +152,36 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     safe_account = _sanitize_sheet_name(account_number)
     logger.debug('Sanitized account name: %s', safe_account)
     
-    # Ensure sheet exists
-    if not _ensure_sheet_exists(service, spreadsheet_id, safe_account):
+    # Ensure sheet exists and check if it's new
+    sheet_exists, is_new = _ensure_sheet_exists(service, spreadsheet_id, safe_account)
+    if not sheet_exists:
         logger.error('Failed to ensure sheet %s exists', safe_account)
+        return False
+
+    # If sheet is new, write headers first
+    if is_new:
+        headers = ['Transaction ID', 'Time', 'Amount', 'Name', 'Phone']
+        header_range = f"{safe_account}!A1:E1"
+        header_body = {'values': [headers]}
+        try:
+            logger.debug('Writing headers to new sheet %s', safe_account)
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=header_range,
+                valueInputOption='USER_ENTERED',
+                body=header_body
+            ).execute()
+            logger.info('Successfully wrote headers to new sheet %s', safe_account)
+        except Exception as e:
+            logger.error('Failed to write headers to sheet %s: %s', safe_account, e)
+            # Continue anyway; headers are just cosmetic
 
     row = [
         payment.get('transId') or '',
         payment.get('time') or '',
         payment.get('amount') or '',
         payment.get('name') or '',
-        payment.get('phone') or ''
+        normalize_phone(payment.get('phone') or '')
     ]
 
     range_name = f"{safe_account}!A:E"
