@@ -43,5 +43,9 @@ class DarajaC2BCallbackSerializer(serializers.Serializer):
         if 'ShortCode' in data and 'BusinessShortCode' not in data:
             data['BusinessShortCode'] = data.pop('ShortCode')
         
+        # Ensure MSISDN is present (default to empty string if missing)
+        if 'MSISDN' not in data:
+            data['MSISDN'] = ''
+        
         logger.debug('Normalized validation data: %s', {k: v for k, v in data.items() if k not in ['OrgAccountBalance']})
         return data

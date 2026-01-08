@@ -70,7 +70,8 @@ def daraja_c2b_callback(request):
     bill_ref = str(validated_data.get('BillRefNumber'))
     trans_id = str(validated_data.get('TransID'))
     trans_amount = float(validated_data.get('TransAmount'))
-    phone = normalize_phone(validated_data.get('MSISDN') or validated_data.get('Msisdn') or '')
+    # Phone number is already normalized by serializer validate method to use MSISDN key
+    phone = normalize_phone(validated_data.get('MSISDN') or '')
     
     logger.debug('PROD: Processing C2B. Payload keys: %s, TransID: %s, BillRefNumber: %s', list(payload.keys()), trans_id, bill_ref)
 
