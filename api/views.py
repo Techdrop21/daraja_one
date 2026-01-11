@@ -23,7 +23,6 @@ SPREADSHEET_ID = GOOGLE_SHEET_ID
 # Request timeouts
 HTTP_TIMEOUT = C2B_HTTP_TIMEOUT
 
-
 def _daraja_response(code: int, desc: str):
     """Return Daraja-compliant JSON response."""
     return JsonResponse({
@@ -75,16 +74,6 @@ def daraja_c2b_callback(request):
     
     logger.debug('PROD: Processing C2B. Payload keys: %s, TransID: %s, BillRefNumber: %s', list(payload.keys()), trans_id, bill_ref)
 
-    # Duplicate check (query sheets for existing TransID)
-    if check_transaction_exists(trans_id, spreadsheet_id=SPREADSHEET_ID):
-        logger.info('Duplicate transaction in sheets: %s', trans_id)
-        return _daraja_response(1, 'Rejected: Duplicate transaction')
-
-    # Validate account against predetermined list
-    if not is_valid_account(bill_ref):
-        logger.info('Invalid BillRefNumber: %s (not in predetermined accounts)', bill_ref)
-        return _daraja_response(1, 'Rejected: Invalid account')
-
     # Synchronous write to Google Sheets (was async, now blocking for reliability)
     try:
         full_name = ' '.join(filter(None, [validated_data.get('FirstName'), validated_data.get('MiddleName'), validated_data.get('LastName')]))
@@ -112,14 +101,24 @@ def daraja_c2b_callback(request):
     return _daraja_response(0, 'Accepted')
 
 
+@csrf_exempt
 @api_view(['POST'])
 def daraja_validation_endpoint(request):
-    """Optional: Handle Daraja validation requests (before C2B).
-    
-    Daraja may send a validation request before attempting C2B.
-    Respond immediately to unblock the request flow.
-    """
-    return _daraja_response(0, 'Validation successful')
+    try:
+        payload = request.data if isinstance(request.data, dict) else json.loads(request.body.decode())
+    except Exception:
+        return _daraja_response(1, 'Rejected: Invalid JSON')
+
+    bill_ref = str(payload.get('BillRefNumber', '')).strip()
+
+    if not is_valid_account(bill_ref):
+        logger.warning(
+            'VALIDATION REJECTED: Invalid BillRefNumber %s',
+            bill_ref
+        )
+        return _daraja_response(1, 'Rejected: Invalid account')
+
+    return _daraja_response(0, 'Accepted')
 
 
 @api_view(['POST'])
