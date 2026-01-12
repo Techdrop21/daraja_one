@@ -68,9 +68,68 @@ if not GOOGLE_SHEET_ID:
 # How long to cache the list of valid accounts (in seconds)
 ACCOUNTS_CACHE_TTL = int(os.environ.get('ACCOUNTS_CACHE_TTL', '120'))
 
-# Comma-separated list of valid account numbers
-# Falls back to hardcoded defaults if not set
-PREDETERMINED_ACCOUNTS_ENV = os.environ.get('PREDETERMINED_ACCOUNTS')
+# Predetermined accounts with team information
+# Format in .env: JSON with account numbers as keys
+# Parsed as: [(AccountNo, TeamName, [phones]), ...]
+PREDETERMINED_ACCOUNTS_JSON = os.environ.get('PREDETERMINED_ACCOUNTS_JSON', '')
+
+
+def parse_predetermined_accounts() -> list:
+    """Parse predetermined accounts from JSON environment variable.
+    
+    Format: 
+    {
+      "600000": {"team": "Sandbox Team", "phones": ["0723145610", "0723145611"]},
+      "001": {"team": "Team One", "phones": ["0723145610", "0723145611"]}
+    }
+    
+    Returns:
+        List of tuples: [(AccountNo, TeamName, [PhoneNumbers]), ...]
+    """
+    if not PREDETERMINED_ACCOUNTS_JSON:
+        return []
+    
+    accounts = []
+    try:
+        # Parse JSON
+        accounts_data = json.loads(PREDETERMINED_ACCOUNTS_JSON)
+        
+        if not isinstance(accounts_data, dict):
+            logger.error('PREDETERMINED_ACCOUNTS_JSON must be a JSON object (dict), got %s', type(accounts_data))
+            return []
+        
+        for account_no, info in accounts_data.items():
+            account_no = account_no.strip()
+            
+            # Validate structure
+            if not isinstance(info, dict):
+                logger.warning('Invalid account info for %s (expected dict): %s', account_no, info)
+                continue
+            
+            team_name = info.get('team', '').strip()
+            phones = info.get('phones', [])
+            
+            if not isinstance(phones, list):
+                logger.warning('Invalid phones for account %s (expected list): %s', account_no, phones)
+                continue
+            
+            phones = [p.strip() for p in phones if isinstance(p, str) and p.strip()]
+            
+            if account_no and team_name and phones:
+                accounts.append((account_no, team_name, phones))
+                logger.debug('Parsed account: %s -> %s (%d phones)', account_no, team_name, len(phones))
+            else:
+                logger.warning('Incomplete account data (skipping): %s -> %s with %d phones', account_no, team_name, len(phones))
+        
+        logger.info('Loaded %d predetermined accounts from JSON environment', len(accounts))
+        return accounts
+        
+    except json.JSONDecodeError as e:
+        logger.error('Failed to parse PREDETERMINED_ACCOUNTS_JSON: invalid JSON - %s', e)
+        return []
+    except Exception as e:
+        logger.exception('Error parsing PREDETERMINED_ACCOUNTS_JSON: %s', e)
+        return []
 
 # ============================================================================
 # Daraja C2B Configuration
@@ -78,6 +137,25 @@ PREDETERMINED_ACCOUNTS_ENV = os.environ.get('PREDETERMINED_ACCOUNTS')
 
 # HTTP timeout for Daraja requests (in seconds)
 C2B_HTTP_TIMEOUT = float(os.environ.get('C2B_HTTP_TIMEOUT', '3.0'))
+
+# ============================================================================
+# Onfon Media SMS Configuration
+# ============================================================================
+
+# Onfon Media API Key + Client ID (recommended authentication method)
+ONFON_API_KEY = os.environ.get('ONFON_API_KEY', '')
+ONFON_CLIENT_ID = os.environ.get('ONFON_CLIENT_ID', '')
+ONFON_SENDER = os.environ.get('ONFON_SENDER', 'Daraja')
+
+# Enable/disable SMS notifications
+SMS_ENABLED = bool(ONFON_API_KEY and ONFON_CLIENT_ID)
+
+if SMS_ENABLED:
+    logger.info('SMS notifications enabled via Onfon Media (API Key authentication)')
+else:
+    logger.warning(
+        'SMS notifications disabled. Set ONFON_API_KEY and ONFON_CLIENT_ID to enable.'
+    )
 
 # ============================================================================
 # Application Configuration

@@ -12,6 +12,7 @@ from .config import (
     GOOGLE_SHEET_ID,
     ACCOUNTS_CACHE_TTL,
     PREDETERMINED_ACCOUNTS_ENV,
+    parse_predetermined_accounts,
     DEBUG_SHEETS,
 )
 
@@ -64,16 +65,22 @@ def _get_service(write: bool = False):
 
 
 def get_predetermined_accounts() -> List[tuple]:
-    """Return the predetermined account list from env or fallback.
+    """Return the predetermined account list from environment or fallback.
 
     Returns list of tuples: (AccountNumber, TeamName, [PhoneNumbers])
-    The env var PREDETERMINED_ACCOUNTS may contain a comma-separated list of account numbers.
+    
+    Priority:
+    1. Parse from PREDETERMINED_ACCOUNTS env var (new format with team info)
+    2. Fall back to FALLBACK_ACCOUNTS hardcoded list
     """
-    if PREDETERMINED_ACCOUNTS_ENV:
-        account_numbers = [a.strip() for a in PREDETERMINED_ACCOUNTS_ENV.split(',') if a.strip()]
-        if account_numbers:
-            # Filter FALLBACK_ACCOUNTS to only include those in PREDETERMINED_ACCOUNTS_ENV
-            return [acc for acc in FALLBACK_ACCOUNTS if acc[0] in account_numbers]
+    # Try to parse from environment first
+    env_accounts = parse_predetermined_accounts()
+    if env_accounts:
+        logger.debug('Using %d predetermined accounts from environment', len(env_accounts))
+        return env_accounts
+    
+    # Fall back to hardcoded defaults
+    logger.debug('No accounts in environment, using fallback accounts')
     return FALLBACK_ACCOUNTS
 
 
@@ -272,3 +279,104 @@ def clear_cache():
     """Clear the accounts cache (useful for testing)."""
     _cache['accounts'] = None
     _cache['fetched_at'] = 0
+
+
+def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
+    """Send SMS notification to team members when payment is received.
+    
+    Args:
+        payment: Payment dict with keys: accountNumber, amount, name, transId, time, phone
+        
+    Returns:
+        True if all SMS were sent successfully, False if any failed
+    """
+    # Import here to avoid circular imports
+    from .sms import send_sms
+    from .config import SMS_ENABLED
+    from datetime import datetime
+    
+    if not SMS_ENABLED:
+        logger.debug('SMS notifications disabled; skipping team notification')
+        return False
+    
+    account_number = str(payment.get('accountNumber') or '')
+    if not account_number:
+        logger.warning('Cannot notify team: no account number in payment')
+        return False
+    
+    # Find the account and get team info
+    accounts = get_predetermined_accounts()
+    account_info = None
+    for acc, team_name, phones in accounts:
+        if acc == account_number:
+            account_info = (team_name, phones)
+            break
+    
+    if not account_info:
+        logger.warning('Cannot notify team: account %s not found in predetermined accounts', account_number)
+        return False
+    
+    team_name, phones = account_info
+    
+    # Build SMS message with confirmation format
+    trans_id = payment.get('transId', '')
+    amount = payment.get('amount', 0)
+    payer_name = payment.get('name', 'Unknown')
+    payer_phone = payment.get('phone', '')
+    trans_time = payment.get('time', '')
+    
+    # Parse transaction time (format: "20250112120000" -> "9/1/26 at 11:45 AM")
+    formatted_date = _format_transaction_time(trans_time)
+    
+    # Format amount as currency
+    formatted_amount = f"Ksh{amount:.2f}"
+    
+    # Build confirmation message
+    message = (
+        f"{trans_id} Confirmed. on {formatted_date} {formatted_amount} "
+        f"received from {payer_name} {payer_phone}. Account Number {account_number}"
+    )
+    
+    # Send SMS to all team members
+    all_sent = True
+    for phone in phones:
+        try:
+            success = send_sms(phone, message)
+            if not success:
+                logger.error('Failed to send SMS to %s for account %s', phone, account_number)
+                all_sent = False
+        except Exception as e:
+            logger.exception('Exception while sending SMS to %s: %s', phone, e)
+            all_sent = False
+    
+    if all_sent:
+        logger.info('Successfully notified %d team members for account %s', len(phones), account_number)
+    
+    return all_sent
+
+
+def _format_transaction_time(time_str: str) -> str:
+    """Format transaction time from Daraja format to readable format.
+    
+    Input format: "20250112120000" (YYYYMMDDHHmmss)
+    Output format: "9/1/26 at 11:45 AM"
+    
+    Args:
+        time_str: Transaction time string
+        
+    Returns:
+        Formatted date time string, or original string if parsing fails
+    """
+    if not time_str or len(time_str) < 14:
+        return time_str
+    
+    try:
+        from datetime import datetime
+        # Parse: "20250112120000" -> datetime object
+        dt = datetime.strptime(time_str, '%Y%m%d%H%M%S')
+        # Format: "9/1/26 at 11:45 AM"
+        formatted = dt.strftime('%-m/%-d/%y at %I:%M %p').replace(' 0', ' ')
+        return formatted
+    except Exception as e:
+        logger.debug('Failed to format transaction time %s: %s', time_str, e)
+        return time_str

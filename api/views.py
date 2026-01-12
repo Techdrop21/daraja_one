@@ -11,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
 
-from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists
+from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists, notify_team_via_sms
 from .serializers import DarajaC2BCallbackSerializer
 from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
 
@@ -89,6 +89,14 @@ def daraja_c2b_callback(request):
         if not success:
             logger.error('PROD: Sheet write failed for TransID %s. Payment: %s', trans_id, payment)
             # Still return success to Daraja, but log the failure
+        
+        # Send SMS notification to team (fire-and-forget in background)
+        try:
+            notify_team_via_sms(payment)
+        except Exception as e:
+            logger.exception('PROD: Exception during team SMS notification for %s. Error: %s', trans_id, e)
+            # Continue anyway, SMS failure shouldn't block payment acceptance
+            
     except Exception as e:
         logger.exception('PROD: Exception during sheet write for %s. Error: %s', trans_id, e)
         # Still return success to Daraja
