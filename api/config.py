@@ -71,7 +71,7 @@ ACCOUNTS_CACHE_TTL = int(os.environ.get('ACCOUNTS_CACHE_TTL', '120'))
 # Predetermined accounts with team information
 # Format in .env: JSON with account numbers as keys
 # Parsed as: [(AccountNo, TeamName, [phones]), ...]
-PREDETERMINED_ACCOUNTS_JSON = os.environ.get('PREDETERMINED_ACCOUNTS_JSON', '')
+PREDETERMINED_ACCOUNTS_ENV = os.environ.get('PREDETERMINED_ACCOUNTS_JSON', '')
 
 
 def parse_predetermined_accounts() -> list:
