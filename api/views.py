@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from typing import Dict, Any
+from datetime import datetime
 
 import requests
 from django.http import JsonResponse
@@ -22,6 +23,28 @@ SPREADSHEET_ID = GOOGLE_SHEET_ID
 
 # Request timeouts
 HTTP_TIMEOUT = C2B_HTTP_TIMEOUT
+
+def _format_transaction_time(trans_time: str) -> str:
+    """Format transaction time to 'DD/MM/YYYY HH:MM PM/AM' format.
+    
+    Handles Daraja format: "20250110143025" (YYYYMMDDHHmmss)
+    Returns: "10/01/2025 2:30 PM"
+    """
+    if not trans_time:
+        return ''
+    
+    try:
+        # Daraja format: YYYYMMDDHHmmss (20250110143025)
+        if len(str(trans_time)) == 14:
+            dt = datetime.strptime(str(trans_time), '%Y%m%d%H%M%S')
+            # Format: DD/MM/YYYY HH:MM PM/AM
+            return dt.strftime('%d/%m/%Y %I:%M %p')
+        else:
+            # If format is different, return as is
+            return str(trans_time)
+    except ValueError:
+        logger.warning('Could not parse transaction time: %s', trans_time)
+        return str(trans_time)
 
 def _daraja_response(code: int, desc: str):
     """Return Daraja-compliant JSON response."""
@@ -69,6 +92,7 @@ def daraja_c2b_callback(request):
     bill_ref = str(validated_data.get('BillRefNumber'))
     trans_id = str(validated_data.get('TransID'))
     trans_amount = float(validated_data.get('TransAmount'))
+    trans_time = validated_data.get('TransTime') or ''
     
     logger.debug('PROD: Processing C2B. Payload keys: %s, TransID: %s, BillRefNumber: %s', list(payload.keys()), trans_id, bill_ref)
 
@@ -78,10 +102,16 @@ def daraja_c2b_callback(request):
         # Convert to title case (capitalize first letter of each word)
         title_case_name = full_name.title() if full_name else ''
         
+        # Format time: Convert to "DD/MM/YYYY HH:MM PM/AM" format
+        formatted_time = _format_transaction_time(trans_time)
+        
+        # Format amount: "KES XXX.XX"
+        formatted_amount = f"KES {trans_amount:,.2f}"
+        
         payment = {
             'transId': trans_id,
-            'time': validated_data.get('TransTime') or '',
-            'amount': trans_amount,
+            'time': formatted_time,
+            'amount': formatted_amount,
             'name': title_case_name,
             'accountNumber': bill_ref,
         }
