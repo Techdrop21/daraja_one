@@ -71,7 +71,7 @@ ACCOUNTS_CACHE_TTL = int(os.environ.get('ACCOUNTS_CACHE_TTL', '120'))
 # Predetermined accounts with team information
 # Format in .env: JSON with account numbers as keys
 # Parsed as: [(AccountNo, TeamName, [phones]), ...]
-PREDETERMINED_ACCOUNTS_ENV = os.environ.get('PREDETERMINED_ACCOUNTS_JSON', '')
+PREDETERMINED_ACCOUNTS_ENV = os.environ.get('PREDETERMINED_ACCOUNTS_ENV', '')
 
 
 def parse_predetermined_accounts() -> list:
@@ -86,16 +86,16 @@ def parse_predetermined_accounts() -> list:
     Returns:
         List of tuples: [(AccountNo, TeamName, [PhoneNumbers]), ...]
     """
-    if not PREDETERMINED_ACCOUNTS_JSON:
+    if not PREDETERMINED_ACCOUNTS_ENV:
         return []
     
     accounts = []
     try:
         # Parse JSON
-        accounts_data = json.loads(PREDETERMINED_ACCOUNTS_JSON)
+        accounts_data = json.loads(PREDETERMINED_ACCOUNTS_ENV)
         
         if not isinstance(accounts_data, dict):
-            logger.error('PREDETERMINED_ACCOUNTS_JSON must be a JSON object (dict), got %s', type(accounts_data))
+            logger.error('PREDETERMINED_ACCOUNTS_ENV must be a JSON object (dict), got %s', type(accounts_data))
             return []
         
         for account_no, info in accounts_data.items():
@@ -125,10 +125,10 @@ def parse_predetermined_accounts() -> list:
         return accounts
         
     except json.JSONDecodeError as e:
-        logger.error('Failed to parse PREDETERMINED_ACCOUNTS_JSON: invalid JSON - %s', e)
+        logger.error('Failed to parse PREDETERMINED_ACCOUNTS_ENV: invalid JSON - %s', e)
         return []
     except Exception as e:
-        logger.exception('Error parsing PREDETERMINED_ACCOUNTS_JSON: %s', e)
+        logger.exception('Error parsing PREDETERMINED_ACCOUNTS_ENV: %s', e)
         return []
 
 # ============================================================================
