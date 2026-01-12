@@ -11,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
 
-from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists, normalize_phone
+from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists
 from .serializers import DarajaC2BCallbackSerializer
 from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
 
@@ -69,8 +69,6 @@ def daraja_c2b_callback(request):
     bill_ref = str(validated_data.get('BillRefNumber'))
     trans_id = str(validated_data.get('TransID'))
     trans_amount = float(validated_data.get('TransAmount'))
-    # Phone number is already normalized by serializer validate method to use MSISDN key
-    phone = normalize_phone(validated_data.get('MSISDN') or '')
     
     logger.debug('PROD: Processing C2B. Payload keys: %s, TransID: %s, BillRefNumber: %s', list(payload.keys()), trans_id, bill_ref)
 
@@ -85,7 +83,6 @@ def daraja_c2b_callback(request):
             'time': validated_data.get('TransTime') or '',
             'amount': trans_amount,
             'name': title_case_name,
-            'phone': phone,
             'accountNumber': bill_ref,
         }
         success = write_payment_to_sheet(payment, spreadsheet_id=SPREADSHEET_ID)

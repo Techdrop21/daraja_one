@@ -23,30 +23,31 @@ _cache = {
     'fetched_at': 0,
 }
 
-# Default predetermined accounts; can be overridden by PREDETERMINED_ACCOUNTS env var
+# Default predetermined accounts with Team Name and Team Phone Numbers
+# Format: (AccountNumber, TeamName, [PhoneNumber1, PhoneNumber2, ...])
 FALLBACK_ACCOUNTS = [
-    '600000',  # Sandbox ShortCode
-    '600001',
-    '600002',
-    '600003',  # Additional test account
-    'TEST001',
-    'TEST002',
-    'ACC004',  # Test account from simulation
-    'ACC001',  # Test account from simulation
-    'ACC006',  # Test account from simulation
-    'ACC002',  # Test account from simulation
+    ('600000', 'Sandbox Team', ['0723145610', '0723145611']),  # Sandbox ShortCode
+    ('600001', 'Team One', ['0723145610', '0723145611']),
+    ('600002', 'Team Two', ['0723145620', '0723145621']),
+    ('600003', 'Team Three', ['0723145630', '0723145631']),  # Additional test account
+    ('TEST001', 'Test Team One', ['0723145610']),
+    ('TEST002', 'Test Team Two', ['0723145620']),
+    ('ACC004', 'Team Four', ['0723145640', '0723145641']),  # Test account from simulation
+    ('ACC001', 'Team One Alt', ['0723145610']),  # Test account from simulation
+    ('ACC006', 'Team Six', ['0723145660', '0723145661']),  # Test account from simulation
+    ('ACC002', 'Team Two Alt', ['0723145620']),  # Test account from simulation
 
     # New Account No's
-    '001',
-    '002',
-    '003',
-    '004',
-    '005',
-    '006',
-    '007',
-    '008',
-    '009',
-    '010',
+    ('001', 'Team One', ['0723145610', '0723145611']),
+    ('002', 'Team Two', ['0723145620', '0723145621']),
+    ('003', 'Team Three', ['0723145630', '0723145631']),
+    ('004', 'Team Four', ['0723145640', '0723145641']),
+    ('005', 'Team Five', ['0723145650', '0723145651']),
+    ('006', 'Team Six', ['0723145660', '0723145661']),
+    ('007', 'Team Seven', ['0723145670', '0723145671']),
+    ('008', 'Team Eight', ['0723145680', '0723145681']),
+    ('009', 'Team Nine', ['0723145690', '0723145691']),
+    ('010', 'Team Ten', ['0723145700', '0723145701']),
 ]
 
 
@@ -62,15 +63,17 @@ def _get_service(write: bool = False):
     return build('sheets', 'v4', credentials=creds)
 
 
-def get_predetermined_accounts() -> List[str]:
+def get_predetermined_accounts() -> List[tuple]:
     """Return the predetermined account list from env or fallback.
 
-    The env var PREDETERMINED_ACCOUNTS may contain a comma-separated list.
+    Returns list of tuples: (AccountNumber, TeamName, [PhoneNumbers])
+    The env var PREDETERMINED_ACCOUNTS may contain a comma-separated list of account numbers.
     """
     if PREDETERMINED_ACCOUNTS_ENV:
-        accounts = [a.strip() for a in PREDETERMINED_ACCOUNTS_ENV.split(',') if a.strip()]
-        if accounts:
-            return accounts
+        account_numbers = [a.strip() for a in PREDETERMINED_ACCOUNTS_ENV.split(',') if a.strip()]
+        if account_numbers:
+            # Filter FALLBACK_ACCOUNTS to only include those in PREDETERMINED_ACCOUNTS_ENV
+            return [acc for acc in FALLBACK_ACCOUNTS if acc[0] in account_numbers]
     return FALLBACK_ACCOUNTS
 
 
@@ -78,7 +81,8 @@ def is_valid_account(account_number: str) -> bool:
     if not account_number:
         return False
     accounts = get_predetermined_accounts()
-    return str(account_number) in accounts
+    account_numbers = [acc[0] for acc in accounts]
+    return str(account_number) in account_numbers
 
 
 def _sanitize_sheet_name(name: str) -> str:
@@ -160,8 +164,8 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
 
     # If sheet is new, write headers first
     if is_new:
-        headers = ['Transaction ID', 'Time', 'Amount', 'Name', 'Phone']
-        header_range = f"{safe_account}!A1:E1"
+        headers = ['Transaction ID', 'Time', 'Amount', 'Name']
+        header_range = f"{safe_account}!A1:D1"
         header_body = {'values': [headers]}
         try:
             logger.debug('Writing headers to new sheet %s', safe_account)
@@ -181,10 +185,9 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         payment.get('time') or '',
         payment.get('amount') or '',
         payment.get('name') or '',
-        normalize_phone(payment.get('phone') or '')
     ]
 
-    range_name = f"{safe_account}!A:E"
+    range_name = f"{safe_account}!A:D"
     body = {'values': [row]}
     try:
         logger.debug('Appending row to sheet %s: %s', safe_account, row)
