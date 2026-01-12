@@ -139,22 +139,26 @@ def parse_predetermined_accounts() -> list:
 C2B_HTTP_TIMEOUT = float(os.environ.get('C2B_HTTP_TIMEOUT', '3.0'))
 
 # ============================================================================
-# Onfon Media SMS Configuration
+# Fast Message SMS Configuration
 # ============================================================================
 
-# Onfon Media API Key + Client ID (recommended authentication method)
-ONFON_API_KEY = os.environ.get('ONFON_API_KEY', '')
-ONFON_CLIENT_ID = os.environ.get('ONFON_CLIENT_ID', '')
-ONFON_SENDER = os.environ.get('ONFON_SENDER', 'Daraja')
+# Fast Message API Key + Partner ID authentication
+FASTMESSAGE_API_KEY = os.environ.get('FASTMESSAGE_API_KEY', '')
+FASTMESSAGE_PARTNER_ID = os.environ.get('FASTMESSAGE_PARTNER_ID', '')
+FASTMESSAGE_SHORTCODE = os.environ.get('FASTMESSAGE_SHORTCODE', 'Daraja')
+
+# Fast Message App Key + Token authentication (alternative method)
+FASTMESSAGE_APP_KEY = os.environ.get('FASTMESSAGE_APP_KEY', '')
+FASTMESSAGE_APP_TOKEN = os.environ.get('FASTMESSAGE_APP_TOKEN', '')
 
 # Enable/disable SMS notifications
-SMS_ENABLED = bool(ONFON_API_KEY and ONFON_CLIENT_ID)
+SMS_ENABLED = bool(FASTMESSAGE_API_KEY and FASTMESSAGE_PARTNER_ID)
 
 if SMS_ENABLED:
-    logger.info('SMS notifications enabled via Onfon Media (API Key authentication)')
+    logger.info('SMS notifications enabled via Fast Message (API Key authentication)')
 else:
     logger.warning(
-        'SMS notifications disabled. Set ONFON_API_KEY and ONFON_CLIENT_ID to enable.'
+        'SMS notifications disabled. Set FASTMESSAGE_API_KEY and FASTMESSAGE_PARTNER_ID to enable.'
     )
 
 # ============================================================================

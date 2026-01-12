@@ -1,7 +1,8 @@
-"""Onfon Media SMS integration for payment notifications.
+"""Fast Message SMS integration for payment notifications.
 
-Uses API Key + Client ID authentication (recommended method).
-No token fetching required - credentials sent directly in headers.
+Uses API Key + Partner ID authentication (primary method).
+Alternative: App Key + App Token authentication (if configured).
+No token fetching required - credentials sent directly in request body.
 """
 
 import requests
@@ -11,22 +12,29 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Onfon Media Configuration - API Key Authentication
-ONFON_API_KEY = os.environ.get('ONFON_API_KEY', '')
-ONFON_CLIENT_ID = os.environ.get('ONFON_CLIENT_ID', '')
-ONFON_SENDER = os.environ.get('ONFON_SENDER', 'Daraja')
+# Fast Message Configuration - Primary Method: API Key + Partner ID
+FASTMESSAGE_API_KEY = os.environ.get('FASTMESSAGE_API_KEY', '')
+FASTMESSAGE_PARTNER_ID = os.environ.get('FASTMESSAGE_PARTNER_ID', '')
+FASTMESSAGE_SHORTCODE = os.environ.get('FASTMESSAGE_SHORTCODE', 'Daraja')
 
-ONFON_SMS_URL = "https://api.onfonmedia.co.ke/v1/sms/send"
+# Fast Message Configuration - Alternative Method: App Key + App Token
+FASTMESSAGE_APP_KEY = os.environ.get('FASTMESSAGE_APP_KEY', '')
+FASTMESSAGE_APP_TOKEN = os.environ.get('FASTMESSAGE_APP_TOKEN', '')
+
+FASTMESSAGE_SMS_URL = "https://sms.fastmessage.co.ke/api/services/sendsms"
 
 SMS_TIMEOUT = 15
 
 
 def send_sms(phone: str, message: str) -> bool:
-    """Send SMS via Onfon Media using API Key authentication.
+    """Send SMS via Fast Message using configured authentication.
+    
+    Primary method: API Key + Partner ID
+    Fallback: App Key + App Token (if configured)
     
     Args:
         phone: Recipient phone number (with or without +254 prefix)
-        message: SMS message text
+        message: SMS message text (GSM7 encoded)
         
     Returns:
         True if SMS was sent successfully, False otherwise
@@ -35,9 +43,16 @@ def send_sms(phone: str, message: str) -> bool:
         logger.warning('Missing phone or message for SMS')
         return False
     
-    # Validate credentials are configured
-    if not ONFON_API_KEY or not ONFON_CLIENT_ID:
-        logger.error('Onfon credentials not configured (ONFON_API_KEY and ONFON_CLIENT_ID required)')
+    # Determine which authentication method to use
+    use_api_key_auth = bool(FASTMESSAGE_API_KEY and FASTMESSAGE_PARTNER_ID)
+    use_app_auth = bool(FASTMESSAGE_APP_KEY and FASTMESSAGE_APP_TOKEN)
+    
+    if not use_api_key_auth and not use_app_auth:
+        logger.error(
+            'Fast Message credentials not configured. '
+            'Set either (FASTMESSAGE_API_KEY + FASTMESSAGE_PARTNER_ID) '
+            'or (FASTMESSAGE_APP_KEY + FASTMESSAGE_APP_TOKEN)'
+        )
         return False
     
     # Normalize phone number format (international format)
@@ -46,30 +61,57 @@ def send_sms(phone: str, message: str) -> bool:
         logger.warning('Invalid phone number: %s', phone)
         return False
     
-    payload = {
-        "to": normalized_phone,
-        "message": message,
-        "sender": ONFON_SENDER
-    }
+    # Build payload based on authentication method
+    if use_api_key_auth:
+        payload = {
+            "apikey": FASTMESSAGE_API_KEY,
+            "partnerID": FASTMESSAGE_PARTNER_ID,
+            "message": message,
+            "shortcode": FASTMESSAGE_SHORTCODE,
+            "mobile": normalized_phone
+        }
+        auth_method = "API Key"
+    else:
+        # App Key + App Token authentication
+        payload = {
+            "appkey": FASTMESSAGE_APP_KEY,
+            "apptoken": FASTMESSAGE_APP_TOKEN,
+            "message": message,
+            "shortcode": FASTMESSAGE_SHORTCODE,
+            "mobile": normalized_phone
+        }
+        auth_method = "App Key + Token"
     
     headers = {
-        "Content-Type": "application/json",
-        "Api-Key": ONFON_API_KEY,
-        "Client-Id": ONFON_CLIENT_ID
+        "Content-Type": "application/json"
     }
     
     try:
-        logger.debug('Sending SMS to %s', normalized_phone)
+        logger.debug('Sending SMS to %s via Fast Message (%s)', normalized_phone, auth_method)
         response = requests.post(
-            ONFON_SMS_URL,
+            FASTMESSAGE_SMS_URL,
             json=payload,
             headers=headers,
             timeout=SMS_TIMEOUT
         )
         
-        if response.status_code == 200:
-            logger.info('SMS sent successfully to %s', normalized_phone)
-            return True
+        response_data = response.json()
+        
+        # Fast Message returns a responses array for POST requests
+        if response.status_code == 200 and response_data.get('responses'):
+            response_item = response_data['responses'][0]
+            if response_item.get('response-code') == 200:
+                logger.info('SMS sent successfully to %s (Message ID: %s)', 
+                           normalized_phone, response_item.get('messageid'))
+                return True
+            else:
+                logger.error(
+                    'SMS send failed for %s (code: %s): %s',
+                    normalized_phone,
+                    response_item.get('response-code'),
+                    response_item.get('response-description')
+                )
+                return False
         else:
             logger.error(
                 'SMS send failed for %s (status: %d): %s',
@@ -81,6 +123,9 @@ def send_sms(phone: str, message: str) -> bool:
             
     except requests.exceptions.RequestException as e:
         logger.error('Request failed while sending SMS to %s: %s', normalized_phone, str(e))
+        return False
+    except (ValueError, KeyError) as e:
+        logger.error('Invalid response format from Fast Message for %s: %s', normalized_phone, str(e))
         return False
     except Exception as e:
         logger.exception('Unexpected error sending SMS to %s: %s', normalized_phone, str(e))
