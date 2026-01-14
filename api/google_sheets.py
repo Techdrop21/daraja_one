@@ -42,8 +42,8 @@ def _fetch_accounts_from_sheet() -> List[tuple]:
     
     Expected sheet format:
     - Column A: Account Number
-    - Column B: Team Name
-    - Column C: Team Phone (comma-separated or space-separated)
+    - Column B: Team Phone (comma-separated or space-separated)
+    - Column C: Team Name
     
     Returns list of tuples: (AccountNumber, TeamName, [PhoneNumbers])
     Returns empty list on any error (for fallback).
@@ -75,8 +75,8 @@ def _fetch_accounts_from_sheet() -> List[tuple]:
                 continue
             
             account_number = str(row[0]).strip() if row[0] else None
-            team_name = str(row[1]).strip() if row[1] else ''
-            phones_str = str(row[2]).strip() if row[2] else ''
+            phones_str = str(row[1]).strip() if row[1] else ''
+            team_name = str(row[2]).strip() if row[2] else ''
             
             if not account_number:
                 logger.debug('Row %d has empty account number, skipping', row_idx)
@@ -87,9 +87,17 @@ def _fetch_accounts_from_sheet() -> List[tuple]:
             if phones_str:
                 # Try comma-separated first, then space-separated
                 if ',' in phones_str:
-                    phones = [p.strip() for p in phones_str.split(',') if p.strip()]
+                    phones_list = [p.strip() for p in phones_str.split(',') if p.strip()]
                 else:
-                    phones = [p.strip() for p in phones_str.split() if p.strip()]
+                    phones_list = [p.strip() for p in phones_str.split() if p.strip()]
+                
+                # Filter out invalid phone numbers (names, addresses, etc.)
+                for phone in phones_list:
+                    if _is_valid_phone_number(phone):
+                        phones.append(phone)
+                    else:
+                        logger.warning('Invalid phone number in row %d account %s: "%s" (must have at least 7 digits)', 
+                                      row_idx, account_number, phone)
             
             accounts.append((account_number, team_name, phones))
             logger.debug('Loaded account: %s - %s with %d phone numbers', account_number, team_name, len(phones))
@@ -110,23 +118,37 @@ def get_predetermined_accounts() -> List[tuple]:
     Strategy:
     1. Fetch from 'Accounts' sheet in Google Sheets
     2. Merge with PREDETERMINED_ACCOUNTS_ENV to ensure complete coverage
-    3. If sheet fetch fails, use environment configuration as fallback
-    4. Return empty list if neither is available
+    3. Prefer environment data when sheet accounts have no valid phones
+    4. If sheet fetch fails, use environment configuration as fallback
+    5. Return empty list if neither is available
     
-    This ensures we always have a fallback to environment-configured accounts
-    even if the sheet fetch partially succeeds (missing some account numbers).
+    This ensures we always have a fallback to environment-configured accounts,
+    especially when sheet data is incomplete or has invalid phones.
     """
     # Try to fetch from sheet first
     sheet_accounts = _fetch_accounts_from_sheet()
     env_accounts = parse_predetermined_accounts()
     
     if sheet_accounts:
-        # Use sheet accounts as primary source
+        # Create a map of environment accounts for easy lookup
+        env_account_map = {acc[0]: acc for acc in env_accounts}
+        
+        # Start with sheet accounts, but prefer environment when sheet has no phones
+        merged_accounts = []
         sheet_account_numbers = {acc[0] for acc in sheet_accounts}
         
-        # Merge in any environment accounts that aren't in the sheet
-        # This ensures we have a fallback for accounts defined only in .env
-        merged_accounts = list(sheet_accounts)
+        for sheet_acc in sheet_accounts:
+            acc_num, team_name, phones = sheet_acc
+            
+            # If sheet account has no phones but environment has one, prefer environment
+            if not phones and acc_num in env_account_map:
+                env_acc = env_account_map[acc_num]
+                merged_accounts.append(env_acc)
+                logger.debug('Preferred environment account %s (sheet has no valid phones)', acc_num)
+            else:
+                merged_accounts.append(sheet_acc)
+        
+        # Add any environment accounts not in the sheet
         for env_acc in env_accounts:
             if env_acc[0] not in sheet_account_numbers:
                 merged_accounts.append(env_acc)
@@ -169,6 +191,28 @@ def normalize_phone(phone: str) -> str:
     # Remove common separators and spaces, but keep digits and leading +
     normalized = ''.join(c for c in str(phone).strip() if c.isdigit() or c == '+')
     return normalized
+
+
+def _is_valid_phone_number(phone: str) -> bool:
+    """Check if a string looks like a valid phone number.
+    
+    Valid phone numbers should have at least 7 digits (minimum for most countries).
+    This filters out names, addresses, or other non-phone text.
+    
+    Args:
+        phone: Phone number string to validate
+        
+    Returns:
+        True if the string contains at least 7 digits, False otherwise
+    """
+    if not phone:
+        return False
+    
+    # Extract digits only
+    digits = ''.join(c for c in str(phone) if c.isdigit())
+    
+    # Valid phone numbers should have at least 7 digits
+    return len(digits) >= 7
 
 
 def _ensure_sheet_exists(service, spreadsheet_id: str, sheet_name: str) -> tuple:
@@ -380,6 +424,7 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     
     team_name, phones = account_info
     
+    logger.debug('Account %s phones: %s (team: %s)', account_number, phones, team_name)
     # Build SMS message with confirmation format
     trans_id = payment.get('transId', '')
     amount = payment.get('amount', 0)

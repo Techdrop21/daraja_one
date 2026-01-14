@@ -115,7 +115,7 @@ def daraja_c2b_callback(request):
         payment = {
             'transId': trans_id,
             'time': formatted_time,
-            'amount': formatted_amount,
+            'amount': trans_amount,  # Keep as numeric value for SMS formatting
             'name': title_case_name,
             'accountNumber': bill_ref,
         }
