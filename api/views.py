@@ -71,10 +71,6 @@ def daraja_c2b_callback(request):
     """
     if request.method != 'POST':
         return _daraja_response(1, 'Rejected: Only POST allowed')
-    
-    if not is_valid_account(bill_ref):
-        logger.warning('BACKUP VALIDATION REJECTED: Invalid BillRefNumber %s in callback. TransID: %s', bill_ref, trans_id)
-        return _daraja_response(1, 'Rejected: Invalid account number')
 
     # Parse and validate payload
     try:
@@ -95,6 +91,10 @@ def daraja_c2b_callback(request):
     validated_data = serializer.validated_data
     bill_ref = str(validated_data.get('BillRefNumber'))
     trans_id = str(validated_data.get('TransID'))
+    
+    if not is_valid_account(bill_ref):
+        logger.warning('BACKUP VALIDATION REJECTED: Invalid BillRefNumber %s in callback. TransID: %s', bill_ref, trans_id)
+        return _daraja_response(1, 'Rejected: Invalid account number')
     trans_amount = float(validated_data.get('TransAmount'))
     trans_time = validated_data.get('TransTime') or ''
     
@@ -145,7 +145,7 @@ def daraja_c2b_callback(request):
 def daraja_validation_endpoint(request):
     try:
         payload = request.data if isinstance(request.data, dict) else json.loads(request.body.decode('utf-8'))
-        bill_ref = str(payload.get('BillRefNumber', '')).strip()  # ← strip() prevents " " or "\t" sneaking through
+        bill_ref = str(payload.get('BillRefNumber', '')).strip()
         
         logger.info('Validation request received. BillRefNumber: "%s" (raw: %s)', bill_ref, payload.get('BillRefNumber'))
         
