@@ -11,10 +11,6 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Google Sheets Configuration
-# ============================================================================
-
 # Detect if we have individual Google credential env vars
 _has_google_env_vars = all([
     os.environ.get('GOOGLE_PROJECT_ID'),
@@ -131,16 +127,8 @@ def parse_predetermined_accounts() -> list:
         logger.exception('Error parsing PREDETERMINED_ACCOUNTS_ENV: %s', e)
         return []
 
-# ============================================================================
-# Daraja C2B Configuration
-# ============================================================================
-
 # HTTP timeout for Daraja requests (in seconds)
 C2B_HTTP_TIMEOUT = float(os.environ.get('C2B_HTTP_TIMEOUT', '3.0'))
-
-# ============================================================================
-# Fast Message SMS Configuration
-# ============================================================================
 
 # Fast Message API Key + Partner ID authentication
 FASTMESSAGE_API_KEY = os.environ.get('FASTMESSAGE_API_KEY', '')
@@ -161,24 +149,13 @@ else:
         'SMS notifications disabled. Set FASTMESSAGE_API_KEY and FASTMESSAGE_PARTNER_ID to enable.'
     )
 
-# ============================================================================
-# Application Configuration
-# ============================================================================
-
 # Enable detailed debug logging for sheet operations
 DEBUG_SHEETS = os.environ.get('DEBUG_SHEETS', 'false').lower() in ('true', '1', 'yes')
-
-# ============================================================================
-# Logging Configuration
-# ============================================================================
 
 # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 
-# ============================================================================
 # Validation & Display
-# ============================================================================
-
 def log_configuration():
     """Log current configuration (safe mode - hides sensitive values)."""
     logger.info(

@@ -103,25 +103,42 @@ def _fetch_accounts_from_sheet() -> List[tuple]:
 
 
 def get_predetermined_accounts() -> List[tuple]:
-    """Return the predetermined account list from sheet or environment.
+    """Return the predetermined account list from sheet with fallback to environment.
 
     Returns list of tuples: (AccountNumber, TeamName, [PhoneNumbers])
     
-    Priority:
+    Strategy:
     1. Fetch from 'Accounts' sheet in Google Sheets
-    2. Parse from PREDETERMINED_ACCOUNTS_ENV (from .env)
-    3. Return empty list if neither is available
+    2. Merge with PREDETERMINED_ACCOUNTS_ENV to ensure complete coverage
+    3. If sheet fetch fails, use environment configuration as fallback
+    4. Return empty list if neither is available
+    
+    This ensures we always have a fallback to environment-configured accounts
+    even if the sheet fetch partially succeeds (missing some account numbers).
     """
     # Try to fetch from sheet first
     sheet_accounts = _fetch_accounts_from_sheet()
+    env_accounts = parse_predetermined_accounts()
+    
     if sheet_accounts:
-        logger.debug('Using %d accounts from Accounts sheet', len(sheet_accounts))
-        return sheet_accounts
+        # Use sheet accounts as primary source
+        sheet_account_numbers = {acc[0] for acc in sheet_accounts}
+        
+        # Merge in any environment accounts that aren't in the sheet
+        # This ensures we have a fallback for accounts defined only in .env
+        merged_accounts = list(sheet_accounts)
+        for env_acc in env_accounts:
+            if env_acc[0] not in sheet_account_numbers:
+                merged_accounts.append(env_acc)
+                logger.debug('Merged environment account %s (not in sheet)', env_acc[0])
+        
+        logger.debug('Using %d accounts from Accounts sheet (merged with %d environment accounts)', 
+                     len(sheet_accounts), len(env_accounts) - len(sheet_account_numbers))
+        return merged_accounts
     
     # Fall back to environment configuration
-    env_accounts = parse_predetermined_accounts()
     if env_accounts:
-        logger.debug('Using %d predetermined accounts from environment', len(env_accounts))
+        logger.debug('Sheet fetch failed; using %d predetermined accounts from environment', len(env_accounts))
         return env_accounts
     
     # No accounts available
@@ -374,7 +391,12 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     formatted_date = _format_transaction_time(trans_time)
     
     # Format amount as currency
-    formatted_amount = f"Ksh{amount:.2f}"
+    # Convert amount to float if it's a string, then format
+    try:
+        amount_float = float(amount)
+    except (ValueError, TypeError):
+        amount_float = 0.0
+    formatted_amount = f"Ksh{amount_float:.2f}"
     
     # Build confirmation message
     message = (
