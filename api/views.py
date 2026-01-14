@@ -144,20 +144,25 @@ def daraja_c2b_callback(request):
 @api_view(['POST'])
 def daraja_validation_endpoint(request):
     try:
-        payload = request.data if isinstance(request.data, dict) else json.loads(request.body.decode())
-    except Exception:
-        return _daraja_response(1, 'Rejected: Invalid JSON')
-
-    bill_ref = str(payload.get('BillRefNumber', '')).strip()
-
-    if not is_valid_account(bill_ref):
-        logger.warning(
-            'VALIDATION REJECTED: Invalid BillRefNumber %s',
-            bill_ref
-        )
-        return _daraja_response(1, 'Rejected: Invalid account')
-
-    return _daraja_response(0, 'Accepted')
+        payload = request.data if isinstance(request.data, dict) else json.loads(request.body.decode('utf-8'))
+        bill_ref = str(payload.get('BillRefNumber', '')).strip()  # ← strip() prevents " " or "\t" sneaking through
+        
+        logger.info('Validation request received. BillRefNumber: "%s" (raw: %s)', bill_ref, payload.get('BillRefNumber'))
+        
+        if not bill_ref:
+            logger.warning('VALIDATION REJECTED: Blank/empty BillRefNumber')
+            return _daraja_response(1, 'Rejected: Account number required')
+        
+        if not is_valid_account(bill_ref):
+            logger.warning('VALIDATION REJECTED: Invalid BillRefNumber "%s"', bill_ref)
+            return _daraja_response(1, 'Rejected: Invalid account number')
+        
+        logger.info('Validation ACCEPTED for account: %s', bill_ref)
+        return _daraja_response(0, 'Accepted')
+    
+    except Exception as e:
+        logger.exception('Validation endpoint error: %s', e)
+        return _daraja_response(1, 'Rejected: System error')
 
 
 @api_view(['POST'])
