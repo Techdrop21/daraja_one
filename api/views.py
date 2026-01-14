@@ -71,6 +71,10 @@ def daraja_c2b_callback(request):
     """
     if request.method != 'POST':
         return _daraja_response(1, 'Rejected: Only POST allowed')
+    
+    if not is_valid_account(bill_ref):
+        logger.warning('BACKUP VALIDATION REJECTED: Invalid BillRefNumber %s in callback. TransID: %s', bill_ref, trans_id)
+        return _daraja_response(1, 'Rejected: Invalid account number')
 
     # Parse and validate payload
     try:
@@ -95,10 +99,6 @@ def daraja_c2b_callback(request):
     trans_time = validated_data.get('TransTime') or ''
     
     logger.debug('PROD: Processing C2B. Payload keys: %s, TransID: %s, BillRefNumber: %s', list(payload.keys()), trans_id, bill_ref)
-
-    if not is_valid_account(bill_ref):
-        logger.warning('BACKUP VALIDATION REJECTED: Invalid BillRefNumber %s in callback. TransID: %s', bill_ref, trans_id)
-        return _daraja_response(1, 'Rejected: Invalid account number')
 
     # Synchronous write to Google Sheets (was async, now blocking for reliability)
     try:

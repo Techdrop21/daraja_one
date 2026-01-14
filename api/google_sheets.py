@@ -24,33 +24,6 @@ _cache = {
     'fetched_at': 0,
 }
 
-# Default predetermined accounts with Team Name and Team Phone Numbers
-# Format: (AccountNumber, TeamName, [PhoneNumber1, PhoneNumber2, ...])
-FALLBACK_ACCOUNTS = [
-    ('600000', 'Sandbox Team', ['0723145610', '0723145611']),  # Sandbox ShortCode
-    ('600001', 'Team One', ['0723145610', '0723145611']),
-    ('600002', 'Team Two', ['0723145620', '0723145621']),
-    ('600003', 'Team Three', ['0723145630', '0723145631']),  # Additional test account
-    ('TEST001', 'Test Team One', ['0723145610']),
-    ('TEST002', 'Test Team Two', ['0723145620']),
-    ('ACC004', 'Team Four', ['0723145640', '0723145641']),  # Test account from simulation
-    ('ACC001', 'Team One Alt', ['0723145610']),  # Test account from simulation
-    ('ACC006', 'Team Six', ['0723145660', '0723145661']),  # Test account from simulation
-    ('ACC002', 'Team Two Alt', ['0723145620']),  # Test account from simulation
-
-    # New Account No's
-    ('001', 'Team One', ['0723145610', '0723145611']),
-    ('002', 'Team Two', ['0723145620', '0723145621']),
-    ('003', 'Team Three', ['0723145630', '0723145631']),
-    ('004', 'Team Four', ['0723145640', '0723145641']),
-    ('005', 'Team Five', ['0723145650', '0723145651']),
-    ('006', 'Team Six', ['0723145660', '0723145661']),
-    ('007', 'Team Seven', ['0723145670', '0723145671']),
-    ('008', 'Team Eight', ['0723145680', '0723145681']),
-    ('009', 'Team Nine', ['0723145690', '0723145691']),
-    ('010', 'Team Ten', ['0723145700', '0723145701']),
-]
-
 
 def _get_service(write: bool = False):
     # Use centralized config
@@ -64,24 +37,96 @@ def _get_service(write: bool = False):
     return build('sheets', 'v4', credentials=creds)
 
 
+def _fetch_accounts_from_sheet() -> List[tuple]:
+    """Fetch accounts from the 'Accounts' sheet in the Google Sheet.
+    
+    Expected sheet format:
+    - Column A: Account Number
+    - Column B: Team Name
+    - Column C: Team Phone (comma-separated or space-separated)
+    
+    Returns list of tuples: (AccountNumber, TeamName, [PhoneNumbers])
+    Returns empty list on any error (for fallback).
+    """
+    if not GOOGLE_SHEET_ID:
+        logger.debug('No GOOGLE_SHEET_ID configured; cannot fetch accounts from sheet')
+        return []
+    
+    try:
+        service = _get_service(write=False)
+        logger.debug('Fetching accounts from Accounts sheet in spreadsheet %s', GOOGLE_SHEET_ID)
+        
+        # Fetch data from 'Accounts' sheet
+        result = service.spreadsheets().values().get(
+            spreadsheetId=GOOGLE_SHEET_ID,
+            range='Accounts!A:C'  # Columns: Account Number, Team Name, Team Phone
+        ).execute()
+        
+        values = result.get('values', [])
+        if not values:
+            logger.warning('Accounts sheet is empty or does not exist')
+            return []
+        
+        accounts = []
+        # Skip header row (first row)
+        for row_idx, row in enumerate(values[1:], start=2):
+            if len(row) < 3:
+                logger.debug('Row %d in Accounts sheet has fewer than 3 columns, skipping', row_idx)
+                continue
+            
+            account_number = str(row[0]).strip() if row[0] else None
+            team_name = str(row[1]).strip() if row[1] else ''
+            phones_str = str(row[2]).strip() if row[2] else ''
+            
+            if not account_number:
+                logger.debug('Row %d has empty account number, skipping', row_idx)
+                continue
+            
+            # Parse phone numbers (comma or space separated)
+            phones = []
+            if phones_str:
+                # Try comma-separated first, then space-separated
+                if ',' in phones_str:
+                    phones = [p.strip() for p in phones_str.split(',') if p.strip()]
+                else:
+                    phones = [p.strip() for p in phones_str.split() if p.strip()]
+            
+            accounts.append((account_number, team_name, phones))
+            logger.debug('Loaded account: %s - %s with %d phone numbers', account_number, team_name, len(phones))
+        
+        logger.info('Successfully fetched %d accounts from Accounts sheet', len(accounts))
+        return accounts
+        
+    except Exception as e:
+        logger.warning('Failed to fetch accounts from sheet; will fall back to environment config: %s', e)
+        return []
+
+
 def get_predetermined_accounts() -> List[tuple]:
-    """Return the predetermined account list from environment or fallback.
+    """Return the predetermined account list from sheet or environment.
 
     Returns list of tuples: (AccountNumber, TeamName, [PhoneNumbers])
     
     Priority:
-    1. Parse from PREDETERMINED_ACCOUNTS env var (new format with team info)
-    2. Fall back to FALLBACK_ACCOUNTS hardcoded list
+    1. Fetch from 'Accounts' sheet in Google Sheets
+    2. Parse from PREDETERMINED_ACCOUNTS_ENV (from .env)
+    3. Return empty list if neither is available
     """
-    # Try to parse from environment first
+    # Try to fetch from sheet first
+    sheet_accounts = _fetch_accounts_from_sheet()
+    if sheet_accounts:
+        logger.debug('Using %d accounts from Accounts sheet', len(sheet_accounts))
+        return sheet_accounts
+    
+    # Fall back to environment configuration
     env_accounts = parse_predetermined_accounts()
     if env_accounts:
         logger.debug('Using %d predetermined accounts from environment', len(env_accounts))
         return env_accounts
     
-    # Fall back to hardcoded defaults
-    logger.debug('No accounts in environment, using fallback accounts')
-    return FALLBACK_ACCOUNTS
+    # No accounts available
+    logger.warning('No accounts configured; neither Accounts sheet nor PREDETERMINED_ACCOUNTS_ENV is available')
+    return []
 
 
 def is_valid_account(account_number: str) -> bool:
