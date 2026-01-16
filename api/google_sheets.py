@@ -171,13 +171,35 @@ def get_predetermined_accounts() -> List[tuple]:
 def is_valid_account(account_number: str) -> bool:
     if not account_number:
         return False
+    # Extract base account number (remove '#' prefix if present)
+    base_account, _ = _extract_base_account(account_number)
     accounts = get_predetermined_accounts()
     account_numbers = [acc[0] for acc in accounts]
-    return str(account_number) in account_numbers
+    return str(base_account) in account_numbers
 
 
 def _sanitize_sheet_name(name: str) -> str:
     return name.replace('\\', '_').replace('/', '_').replace('?', '_').replace('*', '_').replace('[', '_').replace(']', '_')
+
+
+def _extract_base_account(account_number: str) -> tuple:
+    """Extract base account number and determine if it's a Savings account.
+    
+    - Account with '#' prefix (e.g., '#001') -> Savings account
+    - Account without '#' prefix (e.g., '001') -> Loans account
+    
+    Args:
+        account_number: The account number, potentially with '#' prefix
+        
+    Returns:
+        Tuple of (base_account, is_savings) where:
+        - base_account: The account number without '#' prefix
+        - is_savings: True if account had '#' prefix, False for Loans
+    """
+    account_str = str(account_number or '').strip()
+    if account_str.startswith('#'):
+        return account_str[1:], True  # Remove '#' prefix, mark as Savings
+    return account_str, False  # No '#' prefix, mark as Loans
 
 
 def normalize_phone(phone: str) -> str:
@@ -244,6 +266,10 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
 
     payment should contain: transId, time, amount, name, phone, accountNumber
     
+    Account numbers with '#' prefix (e.g., '#001') are written to Savings column.
+    Account numbers without '#' prefix (e.g., '001') are written to Loans column.
+    Both variations of the same account (e.g., '#001' and '001') share the same sheet.
+    
     Only writes to predetermined accounts. Ignores requests for non-predetermined accounts.
     """
     if not spreadsheet_id:
@@ -258,6 +284,11 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         logger.warning('Ignoring payment for non-predetermined account: %s (TransID: %s)', account_number, payment.get('transId'))
         return False
 
+    # Extract base account and determine type (Savings vs Loans)
+    base_account, is_savings = _extract_base_account(account_number)
+    account_type = 'Savings' if is_savings else 'Loans'
+    logger.debug('Payment for account %s: type=%s, base_account=%s', account_number, account_type, base_account)
+
     try:
         logger.debug('Attempting to initialize Google Sheets service for write')
         service = _get_service(write=True)
@@ -266,7 +297,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         logger.error('Failed to initialize Google Sheets service: %s', e, exc_info=True)
         return False
 
-    safe_account = _sanitize_sheet_name(account_number)
+    safe_account = _sanitize_sheet_name(base_account)
     logger.debug('Sanitized account name: %s', safe_account)
     
     # Ensure sheet exists and check if it's new
@@ -277,8 +308,8 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
 
     # If sheet is new, write headers first
     if is_new:
-        headers = ['Transaction ID', 'Time', 'Amount', 'Name']
-        header_range = f"{safe_account}!A1:D1"
+        headers = ['Transaction ID', 'Time', 'Savings', 'Loans', 'Name', 'Phone Number']
+        header_range = f"{safe_account}!A1:F1"
         header_body = {'values': [headers]}
         try:
             logger.debug('Writing headers to new sheet %s', safe_account)
@@ -293,17 +324,23 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
             logger.error('Failed to write headers to sheet %s: %s', safe_account, e)
             # Continue anyway; headers are just cosmetic
 
-    row = [
-        payment.get('transId') or '',
-        payment.get('time') or '',
-        payment.get('amount') or '',
-        payment.get('name') or '',
-    ]
+    # Build row with amount in the appropriate column (Savings or Loans)
+    trans_id = payment.get('transId') or ''
+    trans_time = payment.get('time') or ''
+    amount = payment.get('amount') or ''
+    name = payment.get('name') or ''
+    phone = payment.get('phone') or ''
+    
+    # Column C is Savings, Column D is Loans
+    savings_amount = amount if is_savings else ''
+    loans_amount = amount if not is_savings else ''
+    
+    row = [trans_id, trans_time, savings_amount, loans_amount, name, phone]
 
-    range_name = f"{safe_account}!A:D"
+    range_name = f"{safe_account}!A:F"
     body = {'values': [row]}
     try:
-        logger.debug('Appending row to sheet %s: %s', safe_account, row)
+        logger.debug('Appending row to sheet %s (%s): %s', safe_account, account_type, row)
         service.spreadsheets().values().append(
             spreadsheetId=spreadsheet_id,
             range=range_name,
@@ -311,7 +348,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
             insertDataOption='INSERT_ROWS',
             body=body
         ).execute()
-        logger.info('Successfully wrote payment %s to sheet %s (account: %s)', payment.get('transId'), spreadsheet_id, safe_account)
+        logger.info('Successfully wrote %s payment %s to sheet %s (account: %s)', account_type, trans_id, spreadsheet_id, safe_account)
         return True
     except Exception as e:
         logger.error('Failed to append payment to sheet %s: %s', safe_account, e, exc_info=True)

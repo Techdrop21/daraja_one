@@ -4,7 +4,7 @@ import os
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env.mlango'))
 except ImportError:
     pass  # python-dotenv not installed; use system env vars
 
