@@ -5,3 +5,4 @@ daraja-sheet.json
 *.md
 .env.example.sms
 .env.mlango
+*.zip
