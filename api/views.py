@@ -15,6 +15,7 @@ from rest_framework import status
 from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists, notify_team_via_sms
 from .serializers import DarajaC2BCallbackSerializer
 from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
+from utils.error_tracker import log_transaction_error, log_payment_error, log_sheets_error, ErrorSource
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +81,23 @@ def daraja_c2b_callback(request):
             payload = json.loads(request.body.decode('utf-8'))
     except Exception as e:
         logger.warning('Invalid JSON payload: %s', e)
+        log_transaction_error(
+            error_source=ErrorSource.OUR_ENDPOINT,
+            error_message="Invalid JSON payload received in C2B callback",
+            exception=e,
+            context={'payload': str(request.body)[:100]}
+        )
         return _daraja_response(1, 'Rejected: Invalid JSON')
 
     serializer = DarajaC2BCallbackSerializer(data=payload)
     if not serializer.is_valid():
         errors = '; '.join([f"{k}: {v[0]}" for k, v in serializer.errors.items()])
         logger.error('PROD: Serializer validation failed. Payload keys: %s, Errors: %s', list(payload.keys()), errors)
+        log_transaction_error(
+            error_source=ErrorSource.VALIDATION,
+            error_message="C2B callback payload validation failed",
+            context={'errors': errors, 'payload_keys': str(list(payload.keys()))}
+        )
         return _daraja_response(1, f'Rejected: {errors}')
 
     validated_data = serializer.validated_data
@@ -94,6 +106,11 @@ def daraja_c2b_callback(request):
     
     if not is_valid_account(bill_ref):
         logger.warning('BACKUP VALIDATION REJECTED: Invalid BillRefNumber %s in callback. TransID: %s', bill_ref, trans_id)
+        log_transaction_error(
+            error_source=ErrorSource.VALIDATION,
+            error_message="Invalid account number received in C2B callback",
+            context={'bill_ref': bill_ref, 'trans_id': trans_id}
+        )
         return _daraja_response(1, 'Rejected: Invalid account number')
     trans_amount = float(validated_data.get('TransAmount'))
     trans_time = validated_data.get('TransTime') or ''
@@ -122,6 +139,15 @@ def daraja_c2b_callback(request):
         success = write_payment_to_sheet(payment, spreadsheet_id=SPREADSHEET_ID)
         if not success:
             logger.error('PROD: Sheet write failed for TransID %s. Payment: %s', trans_id, payment)
+            log_sheets_error(
+                error_message="Failed to write payment record to Google Sheets",
+                operation="write_payment",
+                context={
+                    'trans_id': trans_id,
+                    'account': bill_ref,
+                    'amount': trans_amount
+                }
+            )
             # Still return success to Daraja, but log the failure
         
         # Send SMS notification to team (fire-and-forget in background)
@@ -129,10 +155,24 @@ def daraja_c2b_callback(request):
             notify_team_via_sms(payment)
         except Exception as e:
             logger.exception('PROD: Exception during team SMS notification for %s. Error: %s', trans_id, e)
+            log_transaction_error(
+                error_source=ErrorSource.SMS_GATEWAY,
+                error_message="Failed to send SMS notification to team",
+                exception=e,
+                context={'trans_id': trans_id, 'account': bill_ref}
+            )
             # Continue anyway, SMS failure shouldn't block payment acceptance
             
     except Exception as e:
         logger.exception('PROD: Exception during sheet write for %s. Error: %s', trans_id, e)
+        log_payment_error(
+            phone=validated_data.get('MSISDN', 'Unknown'),
+            amount=trans_amount,
+            account_id=bill_ref,
+            error_source=ErrorSource.GOOGLE_SHEETS,
+            error_message="Exception during payment sheet write process",
+            exception=e
+        )
         # Still return success to Daraja
 
     logger.info('Accepted transaction %s for account %s amount %.2f', trans_id, bill_ref, trans_amount)
@@ -151,10 +191,20 @@ def daraja_validation_endpoint(request):
         
         if not bill_ref:
             logger.warning('VALIDATION REJECTED: Blank/empty BillRefNumber')
+            log_transaction_error(
+                error_source=ErrorSource.VALIDATION,
+                error_message="Validation endpoint received empty account number",
+                context={'raw_value': str(payload.get('BillRefNumber'))}
+            )
             return _daraja_response(1, 'Rejected: Account number required')
         
         if not is_valid_account(bill_ref):
             logger.warning('VALIDATION REJECTED: Invalid BillRefNumber "%s"', bill_ref)
+            log_transaction_error(
+                error_source=ErrorSource.VALIDATION,
+                error_message="Validation endpoint rejected invalid account number",
+                context={'bill_ref': bill_ref}
+            )
             return _daraja_response(1, 'Rejected: Invalid account number')
         
         logger.info('Validation ACCEPTED for account: %s', bill_ref)
@@ -162,6 +212,11 @@ def daraja_validation_endpoint(request):
     
     except Exception as e:
         logger.exception('Validation endpoint error: %s', e)
+        log_transaction_error(
+            error_source=ErrorSource.OUR_ENDPOINT,
+            error_message="Exception in validation endpoint",
+            exception=e
+        )
         return _daraja_response(1, 'Rejected: System error')
 
 
@@ -189,6 +244,11 @@ def daraja_test_sheet_write(request):
             payload = json.loads(request.body.decode('utf-8'))
     except Exception as e:
         logger.warning('Invalid JSON in test write: %s', e)
+        log_transaction_error(
+            error_source=ErrorSource.OUR_ENDPOINT,
+            error_message="Invalid JSON in test sheet write endpoint",
+            exception=e
+        )
         return Response(
             {'error': f'Invalid JSON: {e}', 'success': False},
             status=status.HTTP_400_BAD_REQUEST
@@ -197,6 +257,11 @@ def daraja_test_sheet_write(request):
     # Validate account first
     account_number = str(payload.get('accountNumber', ''))
     if not is_valid_account(account_number):
+        log_transaction_error(
+            error_source=ErrorSource.VALIDATION,
+            error_message="Test sheet write rejected - invalid account",
+            context={'account_number': account_number}
+        )
         return Response(
             {
                 'error': f'Invalid account: {account_number} is not in predetermined accounts',
@@ -208,7 +273,22 @@ def daraja_test_sheet_write(request):
 
     # Call synchronous write (not async)
     from .google_sheets import write_payment_to_sheet
-    success = write_payment_to_sheet(payload, spreadsheet_id=SPREADSHEET_ID)
+    try:
+        success = write_payment_to_sheet(payload, spreadsheet_id=SPREADSHEET_ID)
+        if not success:
+            log_sheets_error(
+                error_message="Test sheet write operation returned failure",
+                operation="test_write",
+                context={'account': account_number, 'trans_id': payload.get('transId')}
+            )
+    except Exception as e:
+        logger.exception('Exception in test sheet write: %s', e)
+        log_sheets_error(
+            error_message="Exception during test sheet write",
+            operation="test_write",
+            exception=e,
+            context={'account': account_number}
+        )
     
     return Response(
         {

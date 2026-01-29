@@ -9,6 +9,7 @@ import requests
 import logging
 import os
 from typing import Optional
+from utils.error_tracker import log_transaction_error, ErrorSource
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,22 @@ def send_sms(phone: str, message: str) -> bool:
             'Set either (FASTMESSAGE_API_KEY + FASTMESSAGE_PARTNER_ID) '
             'or (FASTMESSAGE_APP_KEY + FASTMESSAGE_APP_TOKEN)'
         )
+        log_transaction_error(
+            error_source=ErrorSource.API_KEYS,
+            error_message="Fast Message SMS credentials not configured",
+            context={'method': 'api_key_or_app_auth'}
+        )
         return False
     
     # Normalize phone number format (international format)
     normalized_phone = _normalize_phone_for_sms(phone)
     if not normalized_phone:
         logger.warning('Invalid phone number: %s', phone)
+        log_transaction_error(
+            error_source=ErrorSource.VALIDATION,
+            error_message="Invalid phone number format for SMS",
+            context={'phone': phone}
+        )
         return False
     
     # Build payload based on authentication method
@@ -105,11 +116,22 @@ def send_sms(phone: str, message: str) -> bool:
                            normalized_phone, response_item.get('messageid'))
                 return True
             else:
+                error_code = response_item.get('response-code')
+                error_desc = response_item.get('response-description')
                 logger.error(
                     'SMS send failed for %s (code: %s): %s',
                     normalized_phone,
-                    response_item.get('response-code'),
-                    response_item.get('response-description')
+                    error_code,
+                    error_desc
+                )
+                log_transaction_error(
+                    error_source=ErrorSource.SMS_GATEWAY,
+                    error_message=f"SMS delivery failed - {error_desc}",
+                    context={
+                        'phone': normalized_phone,
+                        'response_code': error_code,
+                        'response_description': error_desc
+                    }
                 )
                 return False
         else:
@@ -119,16 +141,61 @@ def send_sms(phone: str, message: str) -> bool:
                 response.status_code,
                 response.text
             )
+            log_transaction_error(
+                error_source=ErrorSource.SMS_GATEWAY,
+                error_message="SMS delivery failed - Invalid HTTP response",
+                context={
+                    'phone': normalized_phone,
+                    'status_code': response.status_code,
+                    'response': response.text[:200]
+                }
+            )
             return False
             
+    except requests.exceptions.ConnectionError as e:
+        logger.error('Connection failed while sending SMS to %s: %s', normalized_phone, str(e))
+        log_transaction_error(
+            error_source=ErrorSource.SMS_GATEWAY,
+            error_message="SMS gateway connection failed",
+            exception=e,
+            context={'phone': normalized_phone}
+        )
+        return False
+    except requests.exceptions.Timeout as e:
+        logger.error('Request timeout while sending SMS to %s: %s', normalized_phone, str(e))
+        log_transaction_error(
+            error_source=ErrorSource.SMS_GATEWAY,
+            error_message="SMS gateway request timeout",
+            exception=e,
+            context={'phone': normalized_phone}
+        )
+        return False
     except requests.exceptions.RequestException as e:
         logger.error('Request failed while sending SMS to %s: %s', normalized_phone, str(e))
+        log_transaction_error(
+            error_source=ErrorSource.SMS_GATEWAY,
+            error_message="SMS gateway request failed",
+            exception=e,
+            context={'phone': normalized_phone}
+        )
         return False
     except (ValueError, KeyError) as e:
         logger.error('Invalid response format from Fast Message for %s: %s', normalized_phone, str(e))
+        log_transaction_error(
+            error_source=ErrorSource.SMS_GATEWAY,
+            error_message="SMS gateway returned invalid response format",
+            exception=e,
+            context={'phone': normalized_phone}
+        )
         return False
     except Exception as e:
         logger.exception('Unexpected error sending SMS to %s: %s', normalized_phone, str(e))
+        log_transaction_error(
+            error_source=ErrorSource.SMS_GATEWAY,
+            error_message="Unexpected error during SMS delivery",
+            exception=e,
+            context={'phone': normalized_phone}
+        )
         return False
 
 

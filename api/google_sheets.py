@@ -15,6 +15,7 @@ from .config import (
     parse_predetermined_accounts,
     DEBUG_SHEETS,
 )
+from utils.error_tracker import log_sheets_error, log_transaction_error, ErrorSource
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,13 @@ def _get_service(write: bool = False):
     keyfile = GOOGLE_SERVICE_ACCOUNT_FILE
 
     if not os.path.exists(keyfile):
-        raise RuntimeError(f'Google service account file not found: {keyfile!s}')
+        error_msg = f'Google service account file not found: {keyfile!s}'
+        log_sheets_error(
+            error_message="Service account credentials file missing",
+            operation="initialize_service",
+            context={'keyfile': str(keyfile)}
+        )
+        raise RuntimeError(error_msg)
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets'] if write else ['https://www.googleapis.com/auth/spreadsheets.readonly']
     creds = service_account.Credentials.from_service_account_file(keyfile, scopes=scopes)
@@ -250,6 +257,11 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         spreadsheet_id = GOOGLE_SHEET_ID
     if not spreadsheet_id:
         logger.warning('No GOOGLE_SHEET_ID configured; skipping sheet write')
+        log_sheets_error(
+            error_message="No GOOGLE_SHEET_ID configured",
+            operation="write_payment",
+            context={'trans_id': payment.get('transId')}
+        )
         return False
 
     # Validate account against predetermined list
@@ -264,6 +276,12 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         logger.debug('Google Sheets service initialized successfully')
     except Exception as e:
         logger.error('Failed to initialize Google Sheets service: %s', e, exc_info=True)
+        log_sheets_error(
+            error_message="Failed to initialize Google Sheets service for writing",
+            operation="write_payment",
+            exception=e,
+            context={'trans_id': payment.get('transId'), 'account': account_number}
+        )
         return False
 
     safe_account = _sanitize_sheet_name(account_number)
@@ -273,6 +291,11 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     sheet_exists, is_new = _ensure_sheet_exists(service, spreadsheet_id, safe_account)
     if not sheet_exists:
         logger.error('Failed to ensure sheet %s exists', safe_account)
+        log_sheets_error(
+            error_message="Failed to ensure sheet exists in spreadsheet",
+            operation="ensure_sheet_exists",
+            context={'sheet_name': safe_account, 'trans_id': payment.get('transId')}
+        )
         return False
 
     # If sheet is new, write headers first
@@ -291,6 +314,12 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
             logger.info('Successfully wrote headers to new sheet %s', safe_account)
         except Exception as e:
             logger.error('Failed to write headers to sheet %s: %s', safe_account, e)
+            log_sheets_error(
+                error_message="Failed to write headers to new sheet",
+                operation="write_headers",
+                exception=e,
+                context={'sheet_name': safe_account}
+            )
             # Continue anyway; headers are just cosmetic
 
     row = [
@@ -315,6 +344,12 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         return True
     except Exception as e:
         logger.error('Failed to append payment to sheet %s: %s', safe_account, e, exc_info=True)
+        log_sheets_error(
+            error_message="Failed to append payment row to Google Sheet",
+            operation="append_row",
+            exception=e,
+            context={'sheet_name': safe_account, 'trans_id': payment.get('transId'), 'amount': payment.get('amount')}
+        )
         return False
 
 
@@ -323,8 +358,14 @@ def write_payment_async(payment: Dict[str, Any], spreadsheet_id: str = None):
     def _worker():
         try:
             write_payment_to_sheet(payment, spreadsheet_id=spreadsheet_id)
-        except Exception:
+        except Exception as e:
             logger.exception('Background sheet write failed for payment %s', payment.get('transId'))
+            log_sheets_error(
+                error_message="Background sheet write task failed",
+                operation="write_payment_async",
+                exception=e,
+                context={'trans_id': payment.get('transId')}
+            )
 
     t = Thread(target=_worker, daemon=True)
     t.start()
@@ -456,9 +497,29 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
             success = send_sms(phone, message)
             if not success:
                 logger.error('Failed to send SMS to %s for account %s', phone, account_number)
+                log_transaction_error(
+                    error_source=ErrorSource.SMS_GATEWAY,
+                    error_message="SMS delivery failed",
+                    context={
+                        'phone': phone,
+                        'account': account_number,
+                        'trans_id': trans_id,
+                        'reason': 'send_sms returned false'
+                    }
+                )
                 all_sent = False
         except Exception as e:
             logger.exception('Exception while sending SMS to %s: %s', phone, e)
+            log_transaction_error(
+                error_source=ErrorSource.SMS_GATEWAY,
+                error_message="Exception during SMS delivery",
+                exception=e,
+                context={
+                    'phone': phone,
+                    'account': account_number,
+                    'trans_id': trans_id
+                }
+            )
             all_sent = False
     
     if all_sent:
