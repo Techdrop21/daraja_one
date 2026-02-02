@@ -125,16 +125,41 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Logging configuration for debugging and error tracking
 LOGS_DIR = Path(os.getenv('LOG_DIR', str(BASE_DIR / 'logs')))
+LOGS_DIR_WRITABLE = False
+
 try:
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR_WRITABLE = True
 except OSError:
     # Fallback to /tmp on read-only systems (e.g., Vercel)
     LOGS_DIR = Path('/tmp/logs')
     try:
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        LOGS_DIR_WRITABLE = True
     except OSError:
-        # If even /tmp fails, use /tmp without creating subdirectory
-        LOGS_DIR = Path('/tmp')
+        # If even /tmp fails, disable file logging
+        LOGS_DIR = None
+        LOGS_DIR_WRITABLE = False
+
+# Build handlers dict conditionally
+LOGGING_HANDLERS = {
+    'console': {
+        'level': 'DEBUG',
+        'class': 'logging.StreamHandler',
+        'formatter': 'verbose',
+    },
+}
+
+# Only add file handler if directory is writable
+if LOGS_DIR_WRITABLE:
+    LOGGING_HANDLERS['error_file'] = {
+        'level': 'ERROR',
+        'class': 'logging.handlers.RotatingFileHandler',
+        'filename': str(LOGS_DIR / 'errors.log'),
+        'maxBytes': 10485760,  # 10MB
+        'backupCount': 5,
+        'formatter': 'error_format',
+    }
 
 LOGGING = {
     'version': 1,
@@ -149,21 +174,7 @@ LOGGING = {
             'datefmt': '%Y-%m-%d %H:%M:%S',
         },
     },
-    'handlers': {
-        'console': {
-            'level': 'DEBUG',
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
-        },
-        'error_file': {
-            'level': 'ERROR',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': os.path.join(BASE_DIR, 'logs', 'errors.log'),
-            'maxBytes': 10485760,  # 10MB
-            'backupCount': 5,
-            'formatter': 'error_format',
-        },
-    },
+    'handlers': LOGGING_HANDLERS,
     'loggers': {
         'api': {
             'handlers': ['console'],
@@ -171,7 +182,7 @@ LOGGING = {
             'propagate': False,
         },
         'daraja_errors': {
-            'handlers': ['error_file'],
+            'handlers': ['error_file'] if LOGS_DIR_WRITABLE else ['console'],
             'level': 'ERROR',
             'propagate': False,
         },
