@@ -124,8 +124,17 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Logging configuration for debugging and error tracking
-LOGS_DIR = BASE_DIR / 'logs'
-LOGS_DIR.mkdir(exist_ok=True)
+LOGS_DIR = Path(os.getenv('LOG_DIR', str(BASE_DIR / 'logs')))
+try:
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # Fallback to /tmp on read-only systems (e.g., Vercel)
+    LOGS_DIR = Path('/tmp/logs')
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # If even /tmp fails, use /tmp without creating subdirectory
+        LOGS_DIR = Path('/tmp')
 
 LOGGING = {
     'version': 1,
