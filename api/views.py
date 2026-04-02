@@ -129,9 +129,12 @@ def daraja_c2b_callback(request):
         # Format time: Convert to "MM/DD/YYYY HH:MM AM/PM" format
         formatted_time = _format_transaction_time(trans_time)
         
-        # Get account balance from callback
-        account_balance = validated_data.get('OrgAccountBalance') or '0'
-        account_balance_str = f"Ksh {account_balance:,.2f}" if account_balance else 'Ksh 0.00'
+        # Get account balance from callback and convert to float
+        try:
+            account_balance_float = float(validated_data.get('OrgAccountBalance') or 0)
+        except (ValueError, TypeError):
+            account_balance_float = 0.0
+        account_balance_str = f"Ksh {account_balance_float:,.2f}"
         
         payment = {
             'transId': trans_id,
