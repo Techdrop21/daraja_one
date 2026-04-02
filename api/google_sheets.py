@@ -1,7 +1,8 @@
 import os
 import time
 import logging
-from typing import List, Dict, Any
+import re
+from typing import List, Dict, Any, Optional, Tuple
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -247,9 +248,16 @@ def _ensure_sheet_exists(service, spreadsheet_id: str, sheet_name: str) -> tuple
 
 
 def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
-    """Write a payment row to the spreadsheet. This is synchronous; use the async wrapper to fire-and-forget.
-
-    payment should contain: transId, time, amount, name, phone, accountNumber
+    """Write a payment row to the spreadsheet using UpdateBatch for optimal performance.
+    
+    Layout:
+    - Row 1: Headers (Transaction ID, Time, Amount, Name, Account # Type, Account Balance)
+    - Rows 2-3: Blank (for readability)
+    - Rows 4+: Transactions (sorted descending, latest on top)
+    
+    Uses UpdateBatch to insert new rows at the top and sort automatically.
+    
+    payment should contain: transId, time, amount, name, accountNumber, accountBalance
     
     Only writes to predetermined accounts. Ignores requests for non-predetermined accounts.
     """
@@ -287,6 +295,9 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     safe_account = _sanitize_sheet_name(account_number)
     logger.debug('Sanitized account name: %s', safe_account)
     
+    # Determine account type based on # in account number
+    account_type = 'Loan' if '#' in account_number else 'Savings'
+    
     # Ensure sheet exists and check if it's new
     sheet_exists, is_new = _ensure_sheet_exists(service, spreadsheet_id, safe_account)
     if not sheet_exists:
@@ -298,55 +309,120 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         )
         return False
 
-    # If sheet is new, write headers first
+    headers = ['Transaction ID', 'Time', 'Amount', 'Name', 'Account # Type', 'Account Balance']
+    batch_requests = []
+    
+    # If sheet is new, initialize with header and blank rows
     if is_new:
-        headers = ['Transaction ID', 'Time', 'Amount', 'Name']
-        header_range = f"{safe_account}!A1:D1"
-        header_body = {'values': [headers]}
-        try:
-            logger.debug('Writing headers to new sheet %s', safe_account)
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=header_range,
-                valueInputOption='USER_ENTERED',
-                body=header_body
-            ).execute()
-            logger.info('Successfully wrote headers to new sheet %s', safe_account)
-        except Exception as e:
-            logger.error('Failed to write headers to sheet %s: %s', safe_account, e)
-            log_sheets_error(
-                error_message="Failed to write headers to new sheet",
-                operation="write_headers",
-                exception=e,
-                context={'sheet_name': safe_account}
-            )
-            # Continue anyway; headers are just cosmetic
-
-    row = [
-        payment.get('transId') or '',
-        payment.get('time') or '',
-        payment.get('amount') or '',
-        payment.get('name') or '',
+        # Create header row (row 1, index 0)
+        header_values = [
+            [{'userEnteredValue': {'stringValue': header}} for header in headers]
+        ]
+        
+        batch_requests.append({
+            'updateCells': {
+                'range': {
+                    'sheetId': 0,
+                    'rowIndex': 0,
+                    'columnIndex': 0,
+                },
+                'rows': [{'values': header_values[0]}],
+                'fields': 'userEnteredValue'
+            }
+        })
+        
+        # Create blank rows 2-3
+        blank_row_values = ['' for _ in headers]
+        blank_cells = [{'userEnteredValue': {'stringValue': ''}} for _ in headers]
+        
+        for blank_idx in range(1, 3):  # Rows 2-3 (indices 1-2)
+            batch_requests.append({
+                'updateCells': {
+                    'range': {
+                        'sheetId': 0,
+                        'rowIndex': blank_idx,
+                        'columnIndex': 0,
+                    },
+                    'rows': [{'values': blank_cells}],
+                    'fields': 'userEnteredValue'
+                }
+            })
+    
+    # Prepare transaction row data
+    trans_row = [
+        payment.get('transId', ''),
+        payment.get('time', ''),
+        str(payment.get('amount', '')),
+        payment.get('name', ''),
+        account_type,
+        payment.get('accountBalance', ''),
     ]
-
-    range_name = f"{safe_account}!A:D"
-    body = {'values': [row]}
+    
+    # Convert to cells format for UpdateCells
+    trans_cells = [{'userEnteredValue': {'stringValue': str(val)}} for val in trans_row]
+    
+    # Insert new row at row 4 (index 3, after header + 2 blank rows)
+    batch_requests.append({
+        'insertDimension': {
+            'range': {
+                'sheetId': 0,
+                'dimension': 'ROWS',
+                'startIndex': 3,  # Insert at row 4
+                'endIndex': 4,
+            },
+            'inheritFromBefore': False
+        }
+    })
+    
+    # Add transaction data to the newly inserted row
+    batch_requests.append({
+        'updateCells': {
+            'range': {
+                'sheetId': 0,
+                'rowIndex': 3,  # Row 4
+                'columnIndex': 0,
+            },
+            'rows': [{'values': trans_cells}],
+            'fields': 'userEnteredValue'
+        }
+    })
+    
+    # Sort data range (rows 4 onwards) by Transaction ID descending
+    batch_requests.append({
+        'sortRange': {
+            'range': {
+                'sheetId': 0,
+                'rowIndex': 3,  # Start from row 4
+                'columnIndex': 0,
+            },
+            'sortSpecs': [
+                {
+                    'dimensionIndex': 0,  # Column A (Transaction ID)
+                    'sortOrder': 'DESCENDING'
+                }
+            ]
+        }
+    })
+    
+    # Execute batch update
     try:
-        logger.debug('Appending row to sheet %s: %s', safe_account, row)
-        service.spreadsheets().values().append(
+        batch_body = {'requests': batch_requests}
+        logger.debug('Executing batch update for sheet %s with %d requests', safe_account, len(batch_requests))
+        
+        response = service.spreadsheets().batchUpdate(
             spreadsheetId=spreadsheet_id,
-            range=range_name,
-            valueInputOption='USER_ENTERED',
-            insertDataOption='INSERT_ROWS',
-            body=body
+            body=batch_body
         ).execute()
-        logger.info('Successfully wrote payment %s to sheet %s (account: %s)', payment.get('transId'), spreadsheet_id, safe_account)
+        
+        logger.info('Successfully wrote payment %s to sheet %s (account: %s)', 
+                   payment.get('transId'), spreadsheet_id, safe_account)
         return True
+        
     except Exception as e:
-        logger.error('Failed to append payment to sheet %s: %s', safe_account, e, exc_info=True)
+        logger.error('Failed to batch update sheet %s: %s', safe_account, e, exc_info=True)
         log_sheets_error(
-            error_message="Failed to append payment row to Google Sheet",
-            operation="append_row",
+            error_message="Failed to batch update payment row to Google Sheet",
+            operation="batch_update_rows",
             exception=e,
             context={'sheet_name': safe_account, 'trans_id': payment.get('transId'), 'amount': payment.get('amount')}
         )
@@ -431,8 +507,10 @@ def clear_cache():
 def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     """Send SMS notification to team members when payment is received.
     
+    Uses new message format without phone numbers.
+    
     Args:
-        payment: Payment dict with keys: accountNumber, amount, name, transId, time, phone
+        payment: Payment dict with keys: accountNumber, amount, name, transId, time, accountBalance
         
     Returns:
         True if all SMS were sent successfully, False if any failed
@@ -466,28 +544,31 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     team_name, phones = account_info
     
     logger.debug('Account %s phones: %s (team: %s)', account_number, phones, team_name)
-    # Build SMS message with confirmation format
+    
+    # Build SMS message with new confirmation format
     trans_id = payment.get('transId', '')
     amount = payment.get('amount', 0)
     payer_name = payment.get('name', 'Unknown')
-    payer_phone = payment.get('phone', '')
     trans_time = payment.get('time', '')
-    
-    # Parse transaction time (format: "20250112120000" -> "9/1/26 at 11:45 AM")
-    formatted_date = _format_transaction_time(trans_time)
+    account_balance = payment.get('accountBalance', '0')
     
     # Format amount as currency
-    # Convert amount to float if it's a string, then format
     try:
         amount_float = float(amount)
     except (ValueError, TypeError):
         amount_float = 0.0
     formatted_amount = f"Ksh{amount_float:.2f}"
     
-    # Build confirmation message
+    # Format account balance as currency (remove Ksh if already present)
+    balance_str = str(account_balance).replace('Ksh', '').replace(',', '').strip()
+    formatted_balance = f"Ksh {balance_str}"
+    
+    # Build new confirmation message format (without phone numbers)
+    # Format: [ UC3BS895V0 Confirmed, on 03/03/2026 04:25 PM Ksh270.00 received from Bancy , Account Number 003. The new account balance is Ksh 2026 ]
     message = (
-        f"{trans_id} Confirmed. on {formatted_date} {formatted_amount} "
-        f"received from {payer_name} {payer_phone}. Account Number {account_number}"
+        f"{trans_id} Confirmed, on {trans_time} {formatted_amount} "
+        f"received from {payer_name} , Account Number {account_number}. "
+        f"The new account balance is {formatted_balance}"
     )
     
     # Send SMS to all team members
@@ -531,25 +612,89 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
 def _format_transaction_time(time_str: str) -> str:
     """Format transaction time from Daraja format to readable format.
     
-    Input format: "20250112120000" (YYYYMMDDHHmmss)
-    Output format: "9/1/26 at 11:45 AM"
+    Input format: "20250112120000" (YYYYMMDDHHmmss) OR "03/03/2026 04:25 PM" (MM/DD/YYYY HH:MM AM/PM)
+    Output format: "03/03/2026 04:25 PM"
     
     Args:
-        time_str: Transaction time string
+        time_str: Transaction time string in either format
         
     Returns:
-        Formatted date time string, or original string if parsing fails
+        Formatted date time string in MM/DD/YYYY HH:MM AM/PM format, or original string if parsing fails
     """
-    if not time_str or len(time_str) < 14:
-        return time_str
+    if not time_str:
+        return ''
     
     try:
         from datetime import datetime
-        # Parse: "20250112120000" -> datetime object
-        dt = datetime.strptime(time_str, '%Y%m%d%H%M%S')
-        # Format: "9/1/26 at 11:45 AM"
-        formatted = dt.strftime('%-m/%-d/%y at %I:%M %p').replace(' 0', ' ')
-        return formatted
+        
+        # Try Daraja format first: "20250112120000" (YYYYMMDDHHmmss)
+        if len(str(time_str)) == 14 and str(time_str).isdigit():
+            dt = datetime.strptime(str(time_str), '%Y%m%d%H%M%S')
+            # Format: MM/DD/YYYY HH:MM AM/PM
+            return dt.strftime('%m/%d/%Y %I:%M %p')
+        
+        # If already in readable format, return as is
+        return str(time_str)
     except Exception as e:
         logger.debug('Failed to format transaction time %s: %s', time_str, e)
-        return time_str
+        return str(time_str)
+
+
+def parse_payment_message(message: str) -> Optional[Dict[str, Any]]:
+    """Parse new message format for payment information.
+    
+    Expected format:
+    UC3BS895V0 Confirmed, on 03/03/2026 04:25 PM Ksh270.00 received from Bancy , Account Number 003. The new account balance is Ksh 2026
+    
+    Extracts:
+    - transId: UC3BS895V0
+    - dateTime: 03/03/2026 04:25 PM
+    - amount: 270.00 (numeric value without currency)
+    - name: Bancy
+    - accountNumber: 003
+    - accountBalance: 2026 (numeric value without currency)
+    
+    Args:
+        message: Message string to parse
+        
+    Returns:
+        Dictionary with extracted fields or None if parsing fails
+    """
+    if not message:
+        return None
+    
+    try:
+        # Pattern to match the new format
+        # UC3BS895V0 Confirmed, on MM/DD/YYYY HH:MM AM/PM Ksh###.## received from Name , Account Number ###. The new account balance is Ksh###
+        pattern = r'(\w+)\s+Confirmed,\s+on\s+([\d/]+\s+[\d:]+\s+(?:AM|PM))\s+(Ksh[\d,]+\.?\d*)\s+received\s+from\s+([^,]+)\s*,\s*Account\s+Number\s+([^.]+)\.\s*The\s+new\s+account\s+balance\s+is\s+(Ksh[\d,]+\.?\d*)'
+        
+        match = re.search(pattern, message.strip(), re.IGNORECASE)
+        if not match:
+            logger.warning('Failed to parse payment message with new format: %s', message[:100])
+            return None
+        
+        trans_id, date_time, amount_str, name, account_num, balance_str = match.groups()
+        
+        # Clean up amount: remove "Ksh" and commas
+        amount_str = amount_str.replace('Ksh', '').replace(',', '').strip()
+        amount = float(amount_str) if amount_str else 0.0
+        
+        # Clean up balance: remove "Ksh" and commas
+        balance_str = balance_str.replace('Ksh', '').replace(',', '').strip()
+        balance = balance_str if balance_str else '0'
+        
+        # Clean up account number and name
+        account_num = account_num.strip()
+        name = name.strip()
+        
+        return {
+            'transId': trans_id,
+            'time': date_time.strip(),  # Already in MM/DD/YYYY HH:MM AM/PM format
+            'amount': amount,
+            'name': name,
+            'accountNumber': account_num,
+            'accountBalance': balance,
+        }
+    except Exception as e:
+        logger.error('Error parsing payment message: %s', e, exc_info=True)
+        return None

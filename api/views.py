@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
 
-from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists, notify_team_via_sms
+from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists, notify_team_via_sms, parse_payment_message
 from .serializers import DarajaC2BCallbackSerializer
 from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
 from utils.error_tracker import log_transaction_error, log_payment_error, log_sheets_error, ErrorSource
@@ -26,22 +26,25 @@ SPREADSHEET_ID = GOOGLE_SHEET_ID
 HTTP_TIMEOUT = C2B_HTTP_TIMEOUT
 
 def _format_transaction_time(trans_time: str) -> str:
-    """Format transaction time to 'DD/MM/YYYY HH:MM PM/AM' format.
+    """Format transaction time to 'MM/DD/YYYY HH:MM AM/PM' format.
     
-    Handles Daraja format: "20250110143025" (YYYYMMDDHHmmss)
-    Returns: "10/01/2025 2:30 PM"
+    Handles:
+    - Daraja format: "20250110143025" (YYYYMMDDHHmmss)
+    - Already formatted: "03/03/2026 04:25 PM"
+    
+    Returns: "03/03/2026 04:25 PM" format
     """
     if not trans_time:
         return ''
     
     try:
         # Daraja format: YYYYMMDDHHmmss (20250110143025)
-        if len(str(trans_time)) == 14:
+        if len(str(trans_time)) == 14 and str(trans_time).isdigit():
             dt = datetime.strptime(str(trans_time), '%Y%m%d%H%M%S')
-            # Format: DD/MM/YYYY HH:MM PM/AM
-            return dt.strftime('%d/%m/%Y %I:%M %p')
+            # Format: MM/DD/YYYY HH:MM AM/PM
+            return dt.strftime('%m/%d/%Y %I:%M %p')
         else:
-            # If format is different, return as is
+            # If already in readable format or other format, return as is
             return str(trans_time)
     except ValueError:
         logger.warning('Could not parse transaction time: %s', trans_time)
@@ -123,18 +126,20 @@ def daraja_c2b_callback(request):
         # Convert to title case (capitalize first letter of each word)
         title_case_name = full_name.title() if full_name else ''
         
-        # Format time: Convert to "DD/MM/YYYY HH:MM PM/AM" format
+        # Format time: Convert to "MM/DD/YYYY HH:MM AM/PM" format
         formatted_time = _format_transaction_time(trans_time)
         
-        # Format amount: "KES XXX.XX"
-        formatted_amount = f"KES {trans_amount:,.2f}"
+        # Get account balance from callback
+        account_balance = validated_data.get('OrgAccountBalance') or '0'
+        account_balance_str = f"Ksh {account_balance:,.2f}" if account_balance else 'Ksh 0.00'
         
         payment = {
             'transId': trans_id,
             'time': formatted_time,
-            'amount': trans_amount,  # Keep as numeric value for SMS formatting
+            'amount': trans_amount,  # Keep as numeric value
             'name': title_case_name,
             'accountNumber': bill_ref,
+            'accountBalance': account_balance_str,
         }
         success = write_payment_to_sheet(payment, spreadsheet_id=SPREADSHEET_ID)
         if not success:
@@ -227,11 +232,11 @@ def daraja_test_sheet_write(request):
     POST payload example:
     {
         "transId": "TEST123",
-        "time": "20260105120000",
+        "time": "01/05/2026 12:00 PM",
         "amount": "100.00",
         "name": "Test User",
-        "phone": "254712345678",
-        "accountNumber": "600000"
+        "accountNumber": "600000",
+        "accountBalance": "Ksh 2500.00"
     }
     
     Only accepts predetermined accounts. Returns error for non-predetermined accounts.
