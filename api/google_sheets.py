@@ -512,9 +512,9 @@ def clear_cache():
 
 
 def _fetch_current_balance_from_sheet(account_number: str, spreadsheet_id: str = None) -> float:
-    """Fetch the current account balance from F1 of the account's sheet.
+    """Fetch the current account balance from F2 of the account's sheet.
     
-    Reads cell F1 which contains the calculated total account balance.
+    Reads cell F2 which contains the calculated total account balance.
     
     Args:
         account_number: The account number (e.g., "001", "ACC 001")
@@ -534,10 +534,10 @@ def _fetch_current_balance_from_sheet(account_number: str, spreadsheet_id: str =
     try:
         service = _get_service(write=False)
         
-        # Fetch cell F1 which contains the current account balance
+        # Fetch cell F2 which contains the current account balance
         result = service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"{safe_account}!F1"  # F1 = Current Account Balance
+            range=f"{safe_account}!F2"  # F2 = Current Account Balance
         ).execute()
         
         values = result.get('values', [])
