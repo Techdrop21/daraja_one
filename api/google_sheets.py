@@ -224,14 +224,15 @@ def _is_valid_phone_number(phone: str) -> bool:
 
 
 def _ensure_sheet_exists(service, spreadsheet_id: str, sheet_name: str) -> tuple:
-    """Check if sheet exists; if not, create it. Returns (exists, is_new)."""
+    """Check if sheet exists; if not, create it. Returns (exists, is_new, sheet_id)."""
     # Check existing sheets
     meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id, fields='sheets.properties').execute()
     sheets = meta.get('sheets', [])
-    names = [s.get('properties', {}).get('title') for s in sheets]
     
-    if sheet_name in names:
-        return True, False
+    for sheet in sheets:
+        properties = sheet.get('properties', {})
+        if properties.get('title') == sheet_name:
+            return True, False, properties.get('sheetId')
     
     # Sheet doesn't exist, create it
     requests_body = {
@@ -240,11 +241,18 @@ def _ensure_sheet_exists(service, spreadsheet_id: str, sheet_name: str) -> tuple
         ]
     }
     try:
-        service.spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body=requests_body).execute()
-        return True, True  # Created successfully and is new
+        response = service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body=requests_body
+        ).execute()
+        replies = response.get('replies', [])
+        created_sheet_id = None
+        if replies:
+            created_sheet_id = replies[0].get('addSheet', {}).get('properties', {}).get('sheetId')
+        return True, True, created_sheet_id  # Created successfully and is new
     except Exception:
         logger.exception('Failed to create sheet %s in spreadsheet %s', sheet_name, spreadsheet_id)
-        return False, False
+        return False, False, None
 
 
 def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
@@ -299,13 +307,13 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     account_type = 'Loan' if '#' in account_number else 'Savings'
     
     # Ensure sheet exists and check if it's new
-    sheet_exists, is_new = _ensure_sheet_exists(service, spreadsheet_id, safe_account)
-    if not sheet_exists:
+    sheet_exists, is_new, sheet_id = _ensure_sheet_exists(service, spreadsheet_id, safe_account)
+    if not sheet_exists or sheet_id is None:
         logger.error('Failed to ensure sheet %s exists', safe_account)
         log_sheets_error(
             error_message="Failed to ensure sheet exists in spreadsheet",
             operation="ensure_sheet_exists",
-            context={'sheet_name': safe_account, 'trans_id': payment.get('transId')}
+            context={'sheet_name': safe_account, 'sheet_id': sheet_id, 'trans_id': payment.get('transId')}
         )
         return False
 
@@ -322,7 +330,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         batch_requests.append({
             'updateCells': {
                 'range': {
-                    'sheetId': 0,
+                    'sheetId': sheet_id,
                     'startRowIndex': 0,
                     'endRowIndex': 1,
                     'startColumnIndex': 0,
@@ -341,7 +349,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
             batch_requests.append({
                 'updateCells': {
                     'range': {
-                        'sheetId': 0,
+                        'sheetId': sheet_id,
                         'startRowIndex': blank_idx,
                         'endRowIndex': blank_idx + 1,
                         'startColumnIndex': 0,
@@ -362,52 +370,41 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         payment.get('accountBalance', ''),
     ]
     
-    # Convert to cells format for UpdateCells
-    trans_cells = [{'userEnteredValue': {'stringValue': str(val)}} for val in trans_row]
-    
-    # Insert new row at row 4 (index 3, after header + 2 blank rows)
-    batch_requests.append({
-        'insertDimension': {
-            'range': {
-                'sheetId': 0,
-                'dimension': 'ROWS',
-                'startIndex': 3,  # Insert at row 4
-                'endIndex': 4,
-            },
-            'inheritFromBefore': False
-        }
-    })
-    
-    # Add transaction data to the newly inserted row
+    # Fetch existing transactions and rewrite the block with the newest payment first.
+    existing_rows = []
+    if not is_new:
+        try:
+            existing_result = service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=f'{safe_account}!A4:F'
+            ).execute()
+            existing_rows = existing_result.get('values', [])
+        except Exception as e:
+            logger.warning('Failed to fetch existing transactions for sheet %s: %s', safe_account, e)
+            existing_rows = []
+
+    all_rows = [trans_row]
+    for row in existing_rows:
+        normalized_row = [str(row[idx]) if idx < len(row) else '' for idx in range(len(headers))]
+        all_rows.append(normalized_row)
+
+    all_row_cells = [
+        {'values': [{'userEnteredValue': {'stringValue': str(val)}} for val in row]}
+        for row in all_rows
+    ]
+
+    # Write the full transaction block starting at row 4 (index 3).
     batch_requests.append({
         'updateCells': {
             'range': {
-                'sheetId': 0,
+                'sheetId': sheet_id,
                 'startRowIndex': 3,  # Row 4
-                'endRowIndex': 4,
+                'endRowIndex': 3 + len(all_row_cells),
                 'startColumnIndex': 0,
                 'endColumnIndex': 6,
             },
-            'rows': [{'values': trans_cells}],
+            'rows': all_row_cells,
             'fields': 'userEnteredValue'
-        }
-    })
-    
-    # Sort data range (rows 4 onwards) by Transaction ID descending
-    batch_requests.append({
-        'sortRange': {
-            'range': {
-                'sheetId': 0,
-                'startRowIndex': 3,  # Start from row 4
-                'startColumnIndex': 0,
-                'endColumnIndex': 6,
-            },
-            'sortSpecs': [
-                {
-                    'dimensionIndex': 0,  # Column A (Transaction ID)
-                    'sortOrder': 'DESCENDING'
-                }
-            ]
         }
     })
     
