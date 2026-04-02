@@ -259,13 +259,13 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     """Write a payment row to the spreadsheet using UpdateBatch for optimal performance.
     
     Layout:
-    - Row 1: Headers (Transaction ID, Time, Amount, Name, Account # Type, Account Balance)
+    - Row 1: Headers (Transaction ID, Time, Amount, Name)
     - Rows 2-3: Blank (for readability)
     - Rows 4+: Transactions (sorted descending, latest on top)
     
     Uses UpdateBatch to insert new rows at the top and sort automatically.
     
-    payment should contain: transId, time, amount, name, accountNumber, accountBalance
+    payment should contain: transId, time, amount, name, accountNumber
     
     Only writes to predetermined accounts. Ignores requests for non-predetermined accounts.
     """
@@ -303,9 +303,6 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     safe_account = _sanitize_sheet_name(account_number)
     logger.debug('Sanitized account name: %s', safe_account)
     
-    # Determine account type based on # in account number
-    account_type = 'Loan' if '#' in account_number else 'Savings'
-    
     # Ensure sheet exists and check if it's new
     sheet_exists, is_new, sheet_id = _ensure_sheet_exists(service, spreadsheet_id, safe_account)
     if not sheet_exists or sheet_id is None:
@@ -317,7 +314,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         )
         return False
 
-    headers = ['Transaction ID', 'Time', 'Amount', 'Name', 'Account # Type', 'Account Balance']
+    headers = ['Transaction ID', 'Time', 'Amount', 'Name']
     batch_requests = []
     
     # If sheet is new, initialize with header and blank rows
@@ -334,7 +331,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
                     'startRowIndex': 0,
                     'endRowIndex': 1,
                     'startColumnIndex': 0,
-                    'endColumnIndex': 6,
+                    'endColumnIndex': 4,
                 },
                 'rows': [{'values': header_values[0]}],
                 'fields': 'userEnteredValue'
@@ -353,7 +350,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
                         'startRowIndex': blank_idx,
                         'endRowIndex': blank_idx + 1,
                         'startColumnIndex': 0,
-                        'endColumnIndex': 6,
+                        'endColumnIndex': 4,
                     },
                     'rows': [{'values': blank_cells}],
                     'fields': 'userEnteredValue'
@@ -366,8 +363,6 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         payment.get('time', ''),
         str(payment.get('amount', '')),
         payment.get('name', ''),
-        account_type,
-        payment.get('accountBalance', ''),
     ]
     
     # Fetch existing transactions and rewrite the block with the newest payment first.
@@ -376,7 +371,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         try:
             existing_result = service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
-                range=f'{safe_account}!A4:F'
+                range=f'{safe_account}!A4:D'
             ).execute()
             existing_rows = existing_result.get('values', [])
         except Exception as e:
@@ -401,7 +396,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
                 'startRowIndex': 3,  # Row 4
                 'endRowIndex': 3 + len(all_row_cells),
                 'startColumnIndex': 0,
-                'endColumnIndex': 6,
+                'endColumnIndex': 4,
             },
             'rows': all_row_cells,
             'fields': 'userEnteredValue'
