@@ -260,10 +260,10 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     
     Layout:
     - Row 1: Headers (Transaction ID, Time, Amount, Name)
-    - Rows 2-3: Blank (for readability)
-    - Rows 4+: Transactions (sorted descending, latest on top)
+    - Row 2: Blank (for readability)
+    - Rows 3+: Transactions (latest on top)
     
-    Uses UpdateBatch to insert new rows at the top and sort automatically.
+    Rewrites the transaction block so the latest payment stays at the top.
     
     payment should contain: transId, time, amount, name, accountNumber
     
@@ -338,11 +338,11 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
             }
         })
         
-        # Create blank rows 2-3
+        # Create blank row 2
         blank_row_values = ['' for _ in headers]
         blank_cells = [{'userEnteredValue': {'stringValue': ''}} for _ in headers]
         
-        for blank_idx in range(1, 3):  # Rows 2-3 (indices 1-2)
+        for blank_idx in range(1, 2):  # Row 2 (index 1)
             batch_requests.append({
                 'updateCells': {
                     'range': {
@@ -371,7 +371,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         try:
             existing_result = service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
-                range=f'{safe_account}!A4:D'
+                range=f'{safe_account}!A3:D'
             ).execute()
             existing_rows = existing_result.get('values', [])
         except Exception as e:
@@ -388,13 +388,13 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         for row in all_rows
     ]
 
-    # Write the full transaction block starting at row 4 (index 3).
+    # Write the full transaction block starting at row 3 (index 2).
     batch_requests.append({
         'updateCells': {
             'range': {
                 'sheetId': sheet_id,
-                'startRowIndex': 3,  # Row 4
-                'endRowIndex': 3 + len(all_row_cells),
+                'startRowIndex': 2,  # Row 3
+                'endRowIndex': 2 + len(all_row_cells),
                 'startColumnIndex': 0,
                 'endColumnIndex': 4,
             },
