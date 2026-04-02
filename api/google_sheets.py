@@ -323,8 +323,10 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
             'updateCells': {
                 'range': {
                     'sheetId': 0,
-                    'rowIndex': 0,
-                    'columnIndex': 0,
+                    'startRowIndex': 0,
+                    'endRowIndex': 1,
+                    'startColumnIndex': 0,
+                    'endColumnIndex': 6,
                 },
                 'rows': [{'values': header_values[0]}],
                 'fields': 'userEnteredValue'
@@ -340,8 +342,10 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
                 'updateCells': {
                     'range': {
                         'sheetId': 0,
-                        'rowIndex': blank_idx,
-                        'columnIndex': 0,
+                        'startRowIndex': blank_idx,
+                        'endRowIndex': blank_idx + 1,
+                        'startColumnIndex': 0,
+                        'endColumnIndex': 6,
                     },
                     'rows': [{'values': blank_cells}],
                     'fields': 'userEnteredValue'
@@ -379,8 +383,10 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         'updateCells': {
             'range': {
                 'sheetId': 0,
-                'rowIndex': 3,  # Row 4
-                'columnIndex': 0,
+                'startRowIndex': 3,  # Row 4
+                'endRowIndex': 4,
+                'startColumnIndex': 0,
+                'endColumnIndex': 6,
             },
             'rows': [{'values': trans_cells}],
             'fields': 'userEnteredValue'
@@ -392,8 +398,9 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
         'sortRange': {
             'range': {
                 'sheetId': 0,
-                'rowIndex': 3,  # Start from row 4
-                'columnIndex': 0,
+                'startRowIndex': 3,  # Start from row 4
+                'startColumnIndex': 0,
+                'endColumnIndex': 6,
             },
             'sortSpecs': [
                 {
@@ -504,10 +511,58 @@ def clear_cache():
     _cache['fetched_at'] = 0
 
 
+def _fetch_current_balance_from_sheet(account_number: str, spreadsheet_id: str = None) -> float:
+    """Fetch the current account balance from F1 of the account's sheet.
+    
+    Reads cell F1 which contains the calculated total account balance.
+    
+    Args:
+        account_number: The account number (e.g., "001", "ACC 001")
+        spreadsheet_id: The Google Sheet ID (uses GOOGLE_SHEET_ID if not provided)
+        
+    Returns:
+        The current balance as a float, or 0 if not found
+    """
+    if not spreadsheet_id:
+        spreadsheet_id = GOOGLE_SHEET_ID
+    if not spreadsheet_id:
+        logger.warning('No GOOGLE_SHEET_ID configured; cannot fetch current balance')
+        return 0.0
+    
+    safe_account = _sanitize_sheet_name(str(account_number))
+    
+    try:
+        service = _get_service(write=False)
+        
+        # Fetch cell F1 which contains the current account balance
+        result = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"{safe_account}!F1"  # F1 = Current Account Balance
+        ).execute()
+        
+        values = result.get('values', [])
+        
+        # Extract balance from F1
+        if values and len(values) > 0 and len(values[0]) > 0:
+            balance_str = str(values[0][0]).strip()
+        else:
+            balance_str = '0'
+        
+        # Extract numeric value from balance string (remove 'Ksh', commas, spaces)
+        balance_float = float(balance_str.replace('Ksh', '').replace(',', '').strip() or '0')
+        logger.debug('Fetched current balance from F1 for account %s: %f', account_number, balance_float)
+        return balance_float
+        
+    except Exception as e:
+        logger.warning('Failed to fetch current balance for account %s: %s', account_number, e)
+        return 0.0
+
+
 def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     """Send SMS notification to team members when payment is received.
     
-    Uses new message format without phone numbers.
+    Fetches current balance from F1 of the account's sheet, adds transaction amount,
+    and sends SMS with full transaction details and new balance.
     
     Args:
         payment: Payment dict with keys: accountNumber, amount, name, transId, time, accountBalance
@@ -545,12 +600,14 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     
     logger.debug('Account %s phones: %s (team: %s)', account_number, phones, team_name)
     
-    # Build SMS message with new confirmation format
+    # Prefetch the current balance from F1 of the account's sheet
+    current_balance = _fetch_current_balance_from_sheet(account_number, spreadsheet_id=GOOGLE_SHEET_ID)
+    
+    # Build SMS message with transaction details
     trans_id = payment.get('transId', '')
     amount = payment.get('amount', 0)
     payer_name = payment.get('name', 'Unknown')
     trans_time = payment.get('time', '')
-    account_balance = payment.get('accountBalance', '0')
     
     # Format amount as currency
     try:
@@ -559,16 +616,21 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
         amount_float = 0.0
     formatted_amount = f"Ksh{amount_float:.2f}"
     
-    # Format account balance as currency (remove Ksh if already present)
-    balance_str = str(account_balance).replace('Ksh', '').replace(',', '').strip()
-    formatted_balance = f"Ksh {balance_str}"
+    # Calculate new account balance by adding transaction amount to current balance from F1
+    try:
+        current_balance_float = float(current_balance) if current_balance else 0.0
+    except (ValueError, TypeError):
+        current_balance_float = 0.0
     
-    # Build new confirmation message format (without phone numbers)
-    # Format: [ UC3BS895V0 Confirmed, on 03/03/2026 04:25 PM Ksh270.00 received from Bancy , Account Number 003. The new account balance is Ksh 2026 ]
+    new_balance_float = current_balance_float + amount_float
+    formatted_new_balance = f"Ksh {new_balance_float:.2f}"
+    
+    # Build full SMS message format
+    # Format: UC3BS895V0 Confirmed, on 03/03/2026 04:25 PM Ksh270.00 received from Bancy , Account Number 003. The new account balance is Ksh 2026
     message = (
         f"{trans_id} Confirmed, on {trans_time} {formatted_amount} "
         f"received from {payer_name} , Account Number {account_number}. "
-        f"The new account balance is {formatted_balance}"
+        f"The new account balance is {formatted_new_balance}"
     )
     
     # Send SMS to all team members
