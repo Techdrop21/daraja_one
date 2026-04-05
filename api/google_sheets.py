@@ -27,6 +27,36 @@ _cache = {
 }
 
 
+def _coerce_amount(value: Any) -> float:
+    """Convert payment amounts to a float suitable for Google Sheets number cells."""
+    if value in (None, ''):
+        return 0.0
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    normalized = str(value).replace("'", '').replace('Ksh', '').replace(',', '').strip()
+    try:
+        return float(normalized or 0.0)
+    except (ValueError, TypeError):
+        logger.warning('Could not coerce amount %r to numeric cell value; defaulting to 0', value)
+        return 0.0
+
+
+def _sheet_cell(value: Any, *, numeric: bool = False) -> Dict[str, Dict[str, Any]]:
+    """Build a Google Sheets userEnteredValue payload with the correct cell type."""
+    if numeric:
+        return {'userEnteredValue': {'numberValue': _coerce_amount(value)}}
+    return {'userEnteredValue': {'stringValue': '' if value is None else str(value)}}
+
+
+def _clean_message_value(value: Any) -> str:
+    """Remove list-like brackets from interpolated message values."""
+    if value is None:
+        return ''
+    return str(value).replace('[', '').replace(']', '').strip()
+
+
 def _get_service(write: bool = False):
     # Use centralized config
     keyfile = GOOGLE_SERVICE_ACCOUNT_FILE
@@ -361,7 +391,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
     trans_row = [
         payment.get('transId', ''),
         payment.get('time', ''),
-        str(payment.get('amount', '')),
+        payment.get('amount', ''),
         payment.get('name', ''),
     ]
     
@@ -380,11 +410,14 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
 
     all_rows = [trans_row]
     for row in existing_rows:
-        normalized_row = [str(row[idx]) if idx < len(row) else '' for idx in range(len(headers))]
+        normalized_row = [row[idx] if idx < len(row) else '' for idx in range(len(headers))]
         all_rows.append(normalized_row)
 
     all_row_cells = [
-        {'values': [{'userEnteredValue': {'stringValue': str(val)}} for val in row]}
+        {'values': [
+            _sheet_cell(val, numeric=(col_idx == 2))
+            for col_idx, val in enumerate(row)
+        ]}
         for row in all_rows
     ]
 
@@ -596,17 +629,18 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     current_balance = _fetch_current_balance_from_sheet(account_number, spreadsheet_id=GOOGLE_SHEET_ID)
     
     # Build SMS message with transaction details
-    trans_id = payment.get('transId', '')
+    trans_id = _clean_message_value(payment.get('transId', ''))
     amount = payment.get('amount', 0)
-    payer_name = payment.get('name', 'Unknown')
-    trans_time = payment.get('time', '')
+    payer_name = _clean_message_value(payment.get('name', 'Unknown')) or 'Unknown'
+    trans_time = _clean_message_value(payment.get('time', ''))
+    account_number = _clean_message_value(account_number)
     
     # Format amount as currency
     try:
         amount_float = float(amount)
     except (ValueError, TypeError):
         amount_float = 0.0
-    formatted_amount = f"Ksh{amount_float:.2f}"
+    formatted_amount = f"Ksh {amount_float:.2f}"
     
     # Calculate new account balance by adding transaction amount to current balance from F1
     try:
@@ -621,7 +655,7 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     # Format: UC3BS895V0 Confirmed, on 03/03/2026 04:25 PM Ksh270.00 received from Bancy , Account Number 003. The new account balance is Ksh 2026
     message = (
         f"{trans_id} Confirmed, on {trans_time} {formatted_amount} "
-        f"received from {payer_name} , Account Number {account_number}. "
+        f"received from {payer_name}, Account Number {account_number}. "
         f"The new account balance is {formatted_new_balance}"
     )
     
