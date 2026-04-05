@@ -1,6 +1,5 @@
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,20 +14,21 @@ if str(ROOT_DIR) not in sys.path:
 load_dotenv(ROOT_DIR / '.env')
 
 from api.config import GOOGLE_SHEET_ID  # noqa: E402
-from api.google_sheets import _get_service  # noqa: E402
+from api.google_sheets import _get_service, _coerce_sheet_datetime  # noqa: E402
 
 
-logger = logging.getLogger('fix_sheet_amounts')
+logger = logging.getLogger('fix_sheet_dates')
 
 TRANSACTION_START_ROW = 3
-AMOUNT_COLUMN_INDEX = 2
-AMOUNT_COLUMN_LABEL = 'C'
+TIME_COLUMN_INDEX = 1
+TIME_COLUMN_LABEL = 'B'
 SKIPPED_SHEETS = {'Accounts'}
+DATE_TIME_PATTERN = 'MM/dd/yyyy hh:mm am/pm'
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Convert text-formatted Google Sheets transaction amounts into numeric cells.'
+        description='Convert text-formatted Google Sheets transaction times into real date-time cells.'
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -39,7 +39,7 @@ def _parse_args() -> argparse.Namespace:
     mode.add_argument(
         '--apply',
         action='store_true',
-        help='Write numeric values back to Google Sheets.',
+        help='Write date-time values back to Google Sheets.',
     )
     parser.add_argument(
         '--sheet',
@@ -63,31 +63,6 @@ def _configure_logging(verbose: bool) -> None:
     logging.basicConfig(level=level, format='%(levelname)s: %(message)s')
 
 
-def _coerce_amount(raw_value: Any) -> Optional[float]:
-    if raw_value is None:
-        return None
-
-    text = str(raw_value).strip()
-    if not text:
-        return None
-
-    normalized = (
-        text.replace("'", '')
-        .replace('Ksh', '')
-        .replace('KES', '')
-        .replace(',', '')
-        .strip()
-    )
-
-    if not normalized:
-        return None
-
-    try:
-        return float(normalized)
-    except (TypeError, ValueError):
-        return None
-
-
 def _sheet_titles(service: Any, spreadsheet_id: str) -> List[Tuple[str, int]]:
     metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     titles: List[Tuple[str, int]] = []
@@ -109,22 +84,25 @@ def _load_rows(service: Any, spreadsheet_id: str, sheet_title: str) -> List[List
     return result.get('values', [])
 
 
-def _build_amount_updates(rows: List[List[Any]]) -> Tuple[List[Dict[str, Any]], int]:
+def _build_date_updates(rows: List[List[Any]]) -> Tuple[List[Dict[str, Any]], int]:
     requests: List[Dict[str, Any]] = []
     skipped = 0
 
     for row_offset, row in enumerate(rows):
-        if len(row) <= AMOUNT_COLUMN_INDEX:
+        if len(row) <= TIME_COLUMN_INDEX:
             continue
 
-        raw_amount = row[AMOUNT_COLUMN_INDEX]
-        if isinstance(raw_amount, (int, float)):
+        raw_time = row[TIME_COLUMN_INDEX]
+        if raw_time in (None, ''):
             continue
 
-        parsed_amount = _coerce_amount(raw_amount)
-        if parsed_amount is None:
+        if isinstance(raw_time, (int, float)):
+            continue
+
+        serial_time = _coerce_sheet_datetime(raw_time)
+        if serial_time is None:
             skipped += 1
-            logger.warning('Skipping unparsable amount at row %d: %r', TRANSACTION_START_ROW + row_offset, raw_amount)
+            logger.warning('Skipping unparsable time at row %d: %r', TRANSACTION_START_ROW + row_offset, raw_time)
             continue
 
         requests.append(
@@ -133,19 +111,25 @@ def _build_amount_updates(rows: List[List[Any]]) -> Tuple[List[Dict[str, Any]], 
                     'range': {
                         'startRowIndex': (TRANSACTION_START_ROW - 1) + row_offset,
                         'endRowIndex': TRANSACTION_START_ROW + row_offset,
-                        'startColumnIndex': AMOUNT_COLUMN_INDEX,
-                        'endColumnIndex': AMOUNT_COLUMN_INDEX + 1,
+                        'startColumnIndex': TIME_COLUMN_INDEX,
+                        'endColumnIndex': TIME_COLUMN_INDEX + 1,
                     },
                     'rows': [
                         {
                             'values': [
                                 {
-                                    'userEnteredValue': {'numberValue': parsed_amount}
+                                    'userEnteredValue': {'numberValue': serial_time},
+                                    'userEnteredFormat': {
+                                        'numberFormat': {
+                                            'type': 'DATE_TIME',
+                                            'pattern': DATE_TIME_PATTERN,
+                                        }
+                                    },
                                 }
                             ]
                         }
                     ],
-                    'fields': 'userEnteredValue',
+                    'fields': 'userEnteredValue,userEnteredFormat.numberFormat',
                 }
             }
         )
@@ -214,21 +198,21 @@ def main() -> int:
     for sheet_title, sheet_id in target_sheets:
         rows = _load_rows(service, spreadsheet_id, sheet_title)
         total_rows_seen += len(rows)
-        requests, skipped = _build_amount_updates(rows)
+        requests, skipped = _build_date_updates(rows)
         total_fixes += len(requests)
         total_skipped += skipped
 
         if apply_changes:
             _apply_updates(service, spreadsheet_id, sheet_id, requests)
             logger.info(
-                'Applied %d amount fix(es) on sheet %s. Skipped %d row(s).',
+                'Applied %d date fix(es) on sheet %s. Skipped %d row(s).',
                 len(requests),
                 sheet_title,
                 skipped,
             )
         else:
             logger.info(
-                'Would apply %d amount fix(es) on sheet %s. Skipped %d row(s).',
+                'Would apply %d date fix(es) on sheet %s. Skipped %d row(s).',
                 len(requests),
                 sheet_title,
                 skipped,

@@ -3,6 +3,7 @@ import time
 import logging
 import re
 from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -43,8 +44,47 @@ def _coerce_amount(value: Any) -> float:
         return 0.0
 
 
-def _sheet_cell(value: Any, *, numeric: bool = False) -> Dict[str, Dict[str, Any]]:
+def _coerce_sheet_datetime(value: Any) -> Optional[float]:
+    """Convert supported transaction time formats into a Sheets date serial number."""
+    if value in (None, ''):
+        return None
+
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value).replace("'", '').strip()
+        if not text:
+            return None
+
+        dt = None
+        for fmt in (
+            '%m/%d/%Y %I:%M %p',
+            '%m/%d/%Y %H:%M',
+            '%m/%d/%Y %H:%M:%S',
+            '%m/%d/%Y %I:%M:%S %p',
+            '%Y%m%d%H%M%S',
+        ):
+            try:
+                dt = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+
+        if dt is None:
+            logger.warning('Could not coerce time %r to Sheets date value; keeping as text', value)
+            return None
+
+    sheets_epoch = datetime(1899, 12, 30)
+    delta = dt - sheets_epoch
+    return delta.days + ((delta.seconds + (delta.microseconds / 1_000_000)) / 86400)
+
+
+def _sheet_cell(value: Any, *, numeric: bool = False, date_time: bool = False) -> Dict[str, Dict[str, Any]]:
     """Build a Google Sheets userEnteredValue payload with the correct cell type."""
+    if date_time:
+        serial = _coerce_sheet_datetime(value)
+        if serial is not None:
+            return {'userEnteredValue': {'numberValue': serial}}
     if numeric:
         return {'userEnteredValue': {'numberValue': _coerce_amount(value)}}
     return {'userEnteredValue': {'stringValue': '' if value is None else str(value)}}
@@ -386,6 +426,26 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
                     'fields': 'userEnteredValue'
                 }
             })
+
+    batch_requests.append({
+        'repeatCell': {
+            'range': {
+                'sheetId': sheet_id,
+                'startRowIndex': 2,
+                'startColumnIndex': 1,
+                'endColumnIndex': 2,
+            },
+            'cell': {
+                'userEnteredFormat': {
+                    'numberFormat': {
+                        'type': 'DATE_TIME',
+                        'pattern': 'MM/dd/yyyy hh:mm am/pm',
+                    }
+                }
+            },
+            'fields': 'userEnteredFormat.numberFormat'
+        }
+    })
     
     # Prepare transaction row data
     trans_row = [
@@ -415,7 +475,7 @@ def write_payment_to_sheet(payment: Dict[str, Any], spreadsheet_id: str = None):
 
     all_row_cells = [
         {'values': [
-            _sheet_cell(val, numeric=(col_idx == 2))
+            _sheet_cell(val, numeric=(col_idx == 2), date_time=(col_idx == 1))
             for col_idx, val in enumerate(row)
         ]}
         for row in all_rows
@@ -567,7 +627,7 @@ def _fetch_current_balance_from_sheet(account_number: str, spreadsheet_id: str =
         
         values = result.get('values', [])
         
-        # Extract balance from F1
+        # Extract balance from F2
         if values and len(values) > 0 and len(values[0]) > 0:
             balance_str = str(values[0][0]).strip()
         else:
@@ -575,7 +635,7 @@ def _fetch_current_balance_from_sheet(account_number: str, spreadsheet_id: str =
         
         # Extract numeric value from balance string (remove 'Ksh', commas, spaces)
         balance_float = float(balance_str.replace('Ksh', '').replace(',', '').strip() or '0')
-        logger.debug('Fetched current balance from F1 for account %s: %f', account_number, balance_float)
+        logger.debug('Fetched current balance from F2 for account %s: %f', account_number, balance_float)
         return balance_float
         
     except Exception as e:
@@ -586,8 +646,8 @@ def _fetch_current_balance_from_sheet(account_number: str, spreadsheet_id: str =
 def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     """Send SMS notification to team members when payment is received.
     
-    Fetches current balance from F1 of the account's sheet, adds transaction amount,
-    and sends SMS with full transaction details and new balance.
+    Fetches the current balance from F2 of the account's sheet
+    and sends SMS with full transaction details and the latest balance.
     
     Args:
         payment: Payment dict with keys: accountNumber, amount, name, transId, time, accountBalance
@@ -625,7 +685,7 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
     
     logger.debug('Account %s phones: %s (team: %s)', account_number, phones, team_name)
     
-    # Prefetch the current balance from F1 of the account's sheet
+    # Fetch the current balance directly from F2 of the account's sheet
     current_balance = _fetch_current_balance_from_sheet(account_number, spreadsheet_id=GOOGLE_SHEET_ID)
     
     # Build SMS message with transaction details
@@ -642,17 +702,14 @@ def notify_team_via_sms(payment: Dict[str, Any]) -> bool:
         amount_float = 0.0
     formatted_amount = f"Ksh {amount_float:.2f}"
     
-    # Calculate new account balance by adding transaction amount to current balance from F1
     try:
         current_balance_float = float(current_balance) if current_balance else 0.0
     except (ValueError, TypeError):
         current_balance_float = 0.0
-    
-    new_balance_float = current_balance_float + amount_float
-    formatted_new_balance = f"Ksh {new_balance_float:.2f}"
+
+    formatted_new_balance = f"Ksh {current_balance_float:.2f}"
     
     # Build full SMS message format
-    # Format: UC3BS895V0 Confirmed, on 03/03/2026 04:25 PM Ksh270.00 received from Bancy , Account Number 003. The new account balance is Ksh 2026
     message = (
         f"{trans_id} Confirmed, on {trans_time} {formatted_amount} "
         f"received from {payer_name}, Account Number {account_number}. "
