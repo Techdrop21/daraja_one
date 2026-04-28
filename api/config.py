@@ -26,7 +26,7 @@ if _has_google_env_vars:
         'type': 'service_account',
         'project_id': os.environ.get('GOOGLE_PROJECT_ID'),
         'private_key_id': os.environ.get('GOOGLE_PRIVATE_KEY_ID'),
-        'private_key': os.environ.get('GOOGLE_PRIVATE_KEY').replace('\\n', '\n'),
+        'private_key': os.environ.get('GOOGLE_PRIVATE_KEY').replace('\\n', '\n').strip(),
         'client_email': os.environ.get('GOOGLE_CLIENT_EMAIL'),
         'client_id': os.environ.get('GOOGLE_CLIENT_ID'),
         'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
@@ -130,23 +130,19 @@ def parse_predetermined_accounts() -> list:
 # HTTP timeout for Daraja requests (in seconds)
 C2B_HTTP_TIMEOUT = float(os.environ.get('C2B_HTTP_TIMEOUT', '3.0'))
 
-# Fast Message API Key + Partner ID authentication
-FASTMESSAGE_API_KEY = os.environ.get('FASTMESSAGE_API_KEY', '')
-FASTMESSAGE_PARTNER_ID = os.environ.get('FASTMESSAGE_PARTNER_ID', '')
-FASTMESSAGE_SHORTCODE = os.environ.get('FASTMESSAGE_SHORTCODE', 'Daraja')
-
-# Fast Message App Key + Token authentication (alternative method)
-FASTMESSAGE_APP_KEY = os.environ.get('FASTMESSAGE_APP_KEY', '')
-FASTMESSAGE_APP_TOKEN = os.environ.get('FASTMESSAGE_APP_TOKEN', '')
+# Talksasa SMS API configuration
+TALKSASA_API_TOKEN = os.environ.get('TALKSASA_API_TOKEN', '')
+TALKSASA_SENDER_ID = os.environ.get('TALKSASA_SENDER_ID', '')
+TALKSASA_BASE_URL = os.environ.get('TALKSASA_BASE_URL', 'https://bulksms.talksasa.com/api/v3')
 
 # Enable/disable SMS notifications
-SMS_ENABLED = bool(FASTMESSAGE_API_KEY and FASTMESSAGE_PARTNER_ID)
+SMS_ENABLED = bool(TALKSASA_API_TOKEN and TALKSASA_SENDER_ID)
 
 if SMS_ENABLED:
-    logger.info('SMS notifications enabled via Fast Message (API Key authentication)')
+    logger.info('SMS notifications enabled via Talksasa')
 else:
     logger.warning(
-        'SMS notifications disabled. Set FASTMESSAGE_API_KEY and FASTMESSAGE_PARTNER_ID to enable.'
+        'SMS notifications disabled. Set TALKSASA_API_TOKEN and TALKSASA_SENDER_ID to enable.'
     )
 
 # Enable detailed debug logging for sheet operations

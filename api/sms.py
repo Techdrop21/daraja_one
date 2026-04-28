@@ -1,8 +1,6 @@
-"""Fast Message SMS integration for payment notifications.
+"""Talksasa SMS integration for payment notifications.
 
-Uses API Key + Partner ID authentication (primary method).
-Alternative: App Key + App Token authentication (if configured).
-No token fetching required - credentials sent directly in request body.
+Uses Talksasa bearer token authentication and sender ID.
 """
 
 import requests
@@ -13,29 +11,21 @@ from utils.error_tracker import log_transaction_error, ErrorSource
 
 logger = logging.getLogger(__name__)
 
-# Fast Message Configuration - Primary Method: API Key + Partner ID
-FASTMESSAGE_API_KEY = os.environ.get('FASTMESSAGE_API_KEY', '')
-FASTMESSAGE_PARTNER_ID = os.environ.get('FASTMESSAGE_PARTNER_ID', '')
-FASTMESSAGE_SHORTCODE = os.environ.get('FASTMESSAGE_SHORTCODE', 'Daraja')
-
-# Fast Message Configuration - Alternative Method: App Key + App Token
-FASTMESSAGE_APP_KEY = os.environ.get('FASTMESSAGE_APP_KEY', '')
-FASTMESSAGE_APP_TOKEN = os.environ.get('FASTMESSAGE_APP_TOKEN', '')
-
-FASTMESSAGE_SMS_URL = "https://sms.fastmessage.co.ke/api/services/sendsms"
+# Talksasa configuration
+TALKSASA_API_TOKEN = os.environ.get('TALKSASA_API_TOKEN', '')
+TALKSASA_SENDER_ID = os.environ.get('TALKSASA_SENDER_ID', '')
+TALKSASA_BASE_URL = os.environ.get('TALKSASA_BASE_URL', 'https://bulksms.talksasa.com/api/v3')
+TALKSASA_SMS_URL = f"{TALKSASA_BASE_URL.rstrip('/')}/sms/send"
 
 SMS_TIMEOUT = 15
 
 
 def send_sms(phone: str, message: str) -> bool:
-    """Send SMS via Fast Message using configured authentication.
-    
-    Primary method: API Key + Partner ID
-    Fallback: App Key + App Token (if configured)
+    """Send SMS via Talksasa using configured bearer token authentication.
     
     Args:
         phone: Recipient phone number (with or without +254 prefix)
-        message: SMS message text (GSM7 encoded)
+        message: SMS message text
         
     Returns:
         True if SMS was sent successfully, False otherwise
@@ -43,24 +33,19 @@ def send_sms(phone: str, message: str) -> bool:
     if not phone or not message:
         logger.warning('Missing phone or message for SMS')
         return False
-    
-    # Determine which authentication method to use
-    use_api_key_auth = bool(FASTMESSAGE_API_KEY and FASTMESSAGE_PARTNER_ID)
-    use_app_auth = bool(FASTMESSAGE_APP_KEY and FASTMESSAGE_APP_TOKEN)
-    
-    if not use_api_key_auth and not use_app_auth:
+
+    if not TALKSASA_API_TOKEN or not TALKSASA_SENDER_ID:
         logger.error(
-            'Fast Message credentials not configured. '
-            'Set either (FASTMESSAGE_API_KEY + FASTMESSAGE_PARTNER_ID) '
-            'or (FASTMESSAGE_APP_KEY + FASTMESSAGE_APP_TOKEN)'
+            'Talksasa SMS credentials not configured. '
+            'Set TALKSASA_API_TOKEN and TALKSASA_SENDER_ID.'
         )
         log_transaction_error(
             error_source=ErrorSource.API_KEYS,
-            error_message="Fast Message SMS credentials not configured",
-            context={'method': 'api_key_or_app_auth'}
+            error_message="Talksasa SMS credentials not configured",
+            context={'method': 'bearer_token_auth'}
         )
         return False
-    
+
     # Normalize phone number format (international format)
     normalized_phone = _normalize_phone_for_sms(phone)
     if not normalized_phone:
@@ -71,87 +56,62 @@ def send_sms(phone: str, message: str) -> bool:
             context={'phone': phone}
         )
         return False
-    
-    # Build payload based on authentication method
-    if use_api_key_auth:
-        payload = {
-            "apikey": FASTMESSAGE_API_KEY,
-            "partnerID": FASTMESSAGE_PARTNER_ID,
-            "message": message,
-            "shortcode": FASTMESSAGE_SHORTCODE,
-            "mobile": normalized_phone
-        }
-        auth_method = "API Key"
-    else:
-        # App Key + App Token authentication
-        payload = {
-            "appkey": FASTMESSAGE_APP_KEY,
-            "apptoken": FASTMESSAGE_APP_TOKEN,
-            "message": message,
-            "shortcode": FASTMESSAGE_SHORTCODE,
-            "mobile": normalized_phone
-        }
-        auth_method = "App Key + Token"
-    
+
+    payload = {
+        "recipient": normalized_phone,
+        "sender_id": TALKSASA_SENDER_ID,
+        "type": "plain",
+        "message": message
+    }
+
     headers = {
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {TALKSASA_API_TOKEN}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
     
     try:
-        logger.debug('Sending SMS to %s via Fast Message (%s)', normalized_phone, auth_method)
+        logger.debug('Sending SMS to %s via Talksasa', normalized_phone)
         response = requests.post(
-            FASTMESSAGE_SMS_URL,
+            TALKSASA_SMS_URL,
             json=payload,
             headers=headers,
             timeout=SMS_TIMEOUT
         )
-        
+
         response_data = response.json()
         
-        # Fast Message returns a responses array for POST requests
-        if response.status_code == 200 and response_data.get('responses'):
-            response_item = response_data['responses'][0]
-            if response_item.get('response-code') == 200:
-                logger.info('SMS sent successfully to %s (Message ID: %s)', 
-                           normalized_phone, response_item.get('messageid'))
-                return True
-            else:
-                error_code = response_item.get('response-code')
-                error_desc = response_item.get('response-description')
-                logger.error(
-                    'SMS send failed for %s (code: %s): %s',
-                    normalized_phone,
-                    error_code,
-                    error_desc
-                )
-                log_transaction_error(
-                    error_source=ErrorSource.SMS_GATEWAY,
-                    error_message=f"SMS delivery failed - {error_desc}",
-                    context={
-                        'phone': normalized_phone,
-                        'response_code': error_code,
-                        'response_description': error_desc
-                    }
-                )
-                return False
-        else:
-            logger.error(
-                'SMS send failed for %s (status: %d): %s',
-                normalized_phone,
-                response.status_code,
-                response.text
+        success = (
+            response.status_code == 200 and
+            (
+                response_data.get('status') == 'success' or
+                response_data.get('success') is True or
+                not response_data.get('errors')
             )
-            log_transaction_error(
-                error_source=ErrorSource.SMS_GATEWAY,
-                error_message="SMS delivery failed - Invalid HTTP response",
-                context={
-                    'phone': normalized_phone,
-                    'status_code': response.status_code,
-                    'response': response.text[:200]
-                }
-            )
-            return False
-            
+        )
+
+        if success:
+            logger.info('SMS sent successfully to %s', normalized_phone)
+            return True
+
+        error_desc = response_data.get('message') or response_data.get('errors') or response.text
+        logger.error(
+            'SMS send failed for %s (status: %d): %s',
+            normalized_phone,
+            response.status_code,
+            error_desc
+        )
+        log_transaction_error(
+            error_source=ErrorSource.SMS_GATEWAY,
+            error_message=f"SMS delivery failed - {error_desc}",
+            context={
+                'phone': normalized_phone,
+                'status_code': response.status_code,
+                'response': response.text[:200]
+            }
+        )
+        return False
+
     except requests.exceptions.ConnectionError as e:
         logger.error('Connection failed while sending SMS to %s: %s', normalized_phone, str(e))
         log_transaction_error(
@@ -180,7 +140,7 @@ def send_sms(phone: str, message: str) -> bool:
         )
         return False
     except (ValueError, KeyError) as e:
-        logger.error('Invalid response format from Fast Message for %s: %s', normalized_phone, str(e))
+        logger.error('Invalid response format from Talksasa for %s: %s', normalized_phone, str(e))
         log_transaction_error(
             error_source=ErrorSource.SMS_GATEWAY,
             error_message="SMS gateway returned invalid response format",

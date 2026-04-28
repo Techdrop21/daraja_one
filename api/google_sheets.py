@@ -111,6 +111,8 @@ def _get_service(write: bool = False):
         raise RuntimeError(error_msg)
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets'] if write else ['https://www.googleapis.com/auth/spreadsheets.readonly']
+    print("time.time():", time.time())
+    print("utc now:", datetime.utcnow())
     creds = service_account.Credentials.from_service_account_file(keyfile, scopes=scopes)
     return build('sheets', 'v4', credentials=creds)
 
