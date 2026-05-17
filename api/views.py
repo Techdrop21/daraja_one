@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from rest_framework import status
 
-from .google_sheets import is_valid_account, write_payment_to_sheet, check_transaction_exists, notify_team_via_sms, parse_payment_message
+from .google_sheets import is_valid_account, write_payment_to_sheet, get_predetermined_accounts, notify_team_via_sms, parse_payment_message
 from .serializers import DarajaC2BCallbackSerializer
 from .config import GOOGLE_SHEET_ID, C2B_HTTP_TIMEOUT
 from utils.error_tracker import log_transaction_error, log_payment_error, log_sheets_error, ErrorSource
@@ -24,6 +24,47 @@ SPREADSHEET_ID = GOOGLE_SHEET_ID
 
 # Request timeouts
 HTTP_TIMEOUT = C2B_HTTP_TIMEOUT
+
+VALID_ACCOUNT_CACHE = set()
+LAST_CACHE_LOAD = 0
+CACHE_TTL = 60  # seconds (tune as needed)
+
+def load_accounts():
+    global VALID_ACCOUNT_CACHE, LAST_CACHE_LOAD
+
+    try:
+        accounts = get_predetermined_accounts()
+        
+        # Extract only account numbers
+        VALID_ACCOUNT_CACHE = {
+            str(acc[0]).strip()
+            for acc in accounts
+            if acc and acc[0]
+        }
+
+        LAST_CACHE_LOAD = time.time()
+
+        logger.info(
+            "Loaded %d accounts into cache",
+            len(VALID_ACCOUNT_CACHE)
+        )
+
+    except Exception as e:
+        logger.exception("Failed to load accounts into cache: %s", e)
+
+
+def is_valid_account_fast(account_number: str) -> bool:
+    global LAST_CACHE_LOAD
+
+    if not account_number:
+        return False
+
+    # Refresh cache if expired
+    if time.time() - LAST_CACHE_LOAD > CACHE_TTL:
+        load_accounts()
+
+    return str(account_number).strip() in VALID_ACCOUNT_CACHE
+
 
 def _format_transaction_time(trans_time: str) -> str:
     """Format transaction time to 'MM/DD/YYYY HH:MM AM/PM' format.
@@ -108,13 +149,11 @@ def daraja_c2b_callback(request):
     trans_id = str(validated_data.get('TransID'))
     
     if not is_valid_account(bill_ref):
-        logger.warning('BACKUP VALIDATION REJECTED: Invalid BillRefNumber %s in callback. TransID: %s', bill_ref, trans_id)
-        log_transaction_error(
-            error_source=ErrorSource.VALIDATION,
-            error_message="Invalid account number received in C2B callback",
-            context={'bill_ref': bill_ref, 'trans_id': trans_id}
+        logger.warning(
+            'POST-VALIDATION WARNING: Invalid account %s passed confirmation. TransID: %s',
+            bill_ref, trans_id
         )
-        return _daraja_response(1, 'Rejected: Invalid account number')
+    
     trans_amount = float(validated_data.get('TransAmount'))
     trans_time = validated_data.get('TransTime') or ''
     
@@ -192,40 +231,47 @@ def daraja_c2b_callback(request):
 @api_view(['POST'])
 def daraja_validation_endpoint(request):
     try:
+        logger.critical(" VALIDATION ENDPOINT HIT ")
+
         payload = request.data if isinstance(request.data, dict) else json.loads(request.body.decode('utf-8'))
         bill_ref = str(payload.get('BillRefNumber', '')).strip()
-        
-        logger.info('Validation request received. BillRefNumber: "%s" (raw: %s)', bill_ref, payload.get('BillRefNumber'))
-        
+
+        logger.info('Validation request received. BillRefNumber: "%s"', bill_ref)
+
+        # Reject empty
         if not bill_ref:
-            logger.warning('VALIDATION REJECTED: Blank/empty BillRefNumber')
-            log_transaction_error(
-                error_source=ErrorSource.VALIDATION,
-                error_message="Validation endpoint received empty account number",
-                context={'raw_value': str(payload.get('BillRefNumber'))}
+            return _daraja_response(
+                "C2B00012",
+                "Invalid Account Number"
             )
-            return _daraja_response(1, 'Rejected: Account number required')
-        
-        if not is_valid_account(bill_ref):
-            logger.warning('VALIDATION REJECTED: Invalid BillRefNumber "%s"', bill_ref)
-            log_transaction_error(
-                error_source=ErrorSource.VALIDATION,
-                error_message="Validation endpoint rejected invalid account number",
-                context={'bill_ref': bill_ref}
+
+        # FAST validation (avoid slow calls if possible)
+        try:
+            valid = is_valid_account_fast(bill_ref)
+        except Exception as e:
+            logger.exception("Validation lookup failed: %s", e)
+            # Fail SAFE (reject if uncertain)
+            return _daraja_response(
+                "C2B00012",
+                "Invalid Account Number"
             )
-            return _daraja_response(1, 'Rejected: Invalid account number')
-        
-        logger.info('Validation ACCEPTED for account: %s', bill_ref)
-        return _daraja_response(0, 'Accepted')
-    
+
+        if not valid:
+            logger.warning('VALIDATION REJECTED: %s', bill_ref)
+            return _daraja_response(
+                "C2B00012",
+                "Invalid Account Number"
+            )
+
+        logger.info('VALIDATION ACCEPTED: %s', bill_ref)
+        return _daraja_response(0, "Accepted")
+
     except Exception as e:
         logger.exception('Validation endpoint error: %s', e)
-        log_transaction_error(
-            error_source=ErrorSource.OUR_ENDPOINT,
-            error_message="Exception in validation endpoint",
-            exception=e
+        return _daraja_response(
+            "C2B00012",  # safer than generic failure
+            "Invalid Account Number"
         )
-        return _daraja_response(1, 'Rejected: System error')
 
 
 @api_view(['POST'])
